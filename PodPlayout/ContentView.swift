@@ -774,6 +774,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .automatic) { importPlaylistButton }
                 ToolbarItem(placement: .automatic) { exportPlaylistButton }
                 ToolbarItem(placement: .automatic) { clearPlaylistButton }
+                ToolbarItem(placement: .automatic) { helpButton }
             }
             .onAppear {
                 vm.loadPersistedPlaylist()
@@ -851,10 +852,6 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingKeyboardShortcuts) {
                 keyboardShortcutsSheet
-            }
-            .onKeyPress(.init("?")) { press in
-                showingKeyboardShortcuts = true
-                return .handled
             }
         }
     }
@@ -1064,6 +1061,16 @@ struct ContentView: View {
         .disabled(vm.items.isEmpty)
     }
 
+    private var helpButton: some View {
+        Button {
+            showingKeyboardShortcuts = true
+        } label: {
+            Label("Keyboard Shortcuts", systemImage: "questionmark.circle")
+        }
+        .help("Show keyboard shortcuts")
+        .keyboardShortcut("/", modifiers: [.command])
+    }
+
     private var keyboardShortcutsSheet: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Keyboard Shortcuts")
@@ -1099,7 +1106,7 @@ struct ContentView: View {
 
                 Group {
                     Text("Other").font(.headline)
-                    ShortcutRow(key: "?", description: "Show this help")
+                    ShortcutRow(key: "⌘ + /", description: "Show keyboard shortcuts")
                 }
             }
 
