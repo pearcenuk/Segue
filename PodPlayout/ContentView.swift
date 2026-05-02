@@ -57,6 +57,13 @@ struct Track: Identifiable, Equatable {
 
     var tagColor: RGBAColor? = nil
     var durationSeconds: TimeInterval? = nil
+    var trimStart: TimeInterval = 0
+    var trimEnd: TimeInterval? = nil
+
+    var effectiveDuration: TimeInterval? {
+        guard let d = durationSeconds else { return nil }
+        return max(0, (trimEnd ?? d) - trimStart)
+    }
 
     var title: String {
         url.deletingPathExtension().lastPathComponent
@@ -151,10 +158,12 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
+    @Published var effectiveEnd: TimeInterval = 0
     @Published var isNearingEnd: Bool = false
     
     @Published var defaultCrossfadeEnabled: Bool = false
     @Published var defaultCrossfadeDuration: TimeInterval = 1.0
+    @Published var playedTrackIDs: Set<UUID> = []
 
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
@@ -213,7 +222,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         savePlaylist()
     }
 
+    private func markCurrentAsPlayed() {
+        if let idx = currentIndex, case .track(let t) = items[idx] {
+            playedTrackIDs.insert(t.id)
+        }
+    }
+
     func play(at index: Int? = nil) {
+        // Mark current track as played when switching to a different one
+        if let newIdx = index, newIdx != currentIndex { markCurrentAsPlayed() }
         // If an index provided, set it
         if let idx = index { currentIndex = idx }
         guard let idx = currentIndex ?? items.indices.first else { return }
@@ -268,6 +285,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     func next() {
         guard let idx = currentIndex else { return }
+        markCurrentAsPlayed()
         let nextIdx = idx + 1
         if items.indices.contains(nextIdx) {
             if case .track(let t) = items[nextIdx] {
@@ -288,6 +306,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     func previous() {
         guard let idx = currentIndex else { return }
+        markCurrentAsPlayed()
         let prevIdx = max(0, idx - 1)
         if items.indices.contains(prevIdx) {
             fade(to: 0.0, duration: 0.2) {
@@ -346,6 +365,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             player?.delegate = self
             player?.prepareToPlay()
             player?.volume = 0
+            if let idx = currentIndex, case .track(let t) = items[idx], t.trimStart > 0 {
+                player?.currentTime = t.trimStart
+            }
             player?.play()
             isPlaying = true
             startTimeUpdates()
@@ -421,16 +443,30 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.currentTime = p.currentTime
             self.duration = p.duration
 
-            let remaining = max(0, self.duration - self.currentTime)
+            // Effective end respects trimEnd
+            if let idx = self.currentIndex, case .track(let t) = self.items[idx], let te = t.trimEnd {
+                self.effectiveEnd = te
+            } else {
+                self.effectiveEnd = self.duration
+            }
+            let remaining = max(0, self.effectiveEnd - self.currentTime)
             self.isNearingEnd = remaining > 0 && remaining <= 30
 
+            // Early-out: trim end reached
+            if let idx = self.currentIndex, case .track(let t) = self.items[idx], let trimEnd = t.trimEnd {
+                if self.currentTime >= trimEnd && !self.isCrossfading {
+                    self.next()
+                    return
+                }
+            }
+
             if !self.isCrossfading, let idx = self.currentIndex {
-                let remaining = max(0, self.duration - self.currentTime)
                 let nextIdx = idx + 1
-                if remaining <= 0.05 { return } // let delegate handle end
+                if remaining <= 0.05 { return } // let delegate handle natural end
                 if self.items.indices.contains(nextIdx), case .track(let incoming) = self.items[nextIdx], incoming.crossfadeEnabled {
                     if remaining <= incoming.crossfadeDuration {
                         self.isCrossfading = true
+                        self.markCurrentAsPlayed()
                         self.currentIndex = nextIdx
                         self.crossfadeTo(url: incoming.url, duration: max(0.1, incoming.crossfadeDuration))
                         DispatchQueue.main.asyncAfter(deadline: .now() + incoming.crossfadeDuration + 0.1) {
@@ -446,6 +482,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         timeLink = nil
         currentTime = 0
         duration = 0
+        effectiveEnd = 0
         isNearingEnd = false
     }
 
@@ -469,6 +506,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         t.usesDefaultCrossfadeDuration = bundle.usesDefaultCrossfadeDuration
                         t.tagColor = bundle.tagColor
                         t.durationSeconds = bundle.durationSeconds ?? t.durationSeconds
+                        t.trimStart = bundle.trimStart
+                        t.trimEnd = bundle.trimEnd
                         if t.durationSeconds == nil {
                             let asset = AVURLAsset(url: t.url)
                             let seconds = CMTimeGetSeconds(asset.duration)
@@ -518,7 +557,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         usesDefaultCrossfadeEnabled: t.usesDefaultCrossfadeEnabled,
                         usesDefaultCrossfadeDuration: t.usesDefaultCrossfadeDuration,
                         tagColor: t.tagColor,
-                        durationSeconds: t.durationSeconds
+                        durationSeconds: t.durationSeconds,
+                        trimStart: t.trimStart,
+                        trimEnd: t.trimEnd
                     ))
                 } else { return nil }
             }
@@ -543,7 +584,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         usesDefaultCrossfadeEnabled: t.usesDefaultCrossfadeEnabled,
                         usesDefaultCrossfadeDuration: t.usesDefaultCrossfadeDuration,
                         tagColor: t.tagColor,
-                        durationSeconds: t.durationSeconds
+                        durationSeconds: t.durationSeconds,
+                        trimStart: t.trimStart,
+                        trimEnd: t.trimEnd
                     ))
                 } else { return nil }
             }
@@ -567,6 +610,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     t.usesDefaultCrossfadeDuration = bundle.usesDefaultCrossfadeDuration
                     t.tagColor = bundle.tagColor
                     t.durationSeconds = bundle.durationSeconds
+                    t.trimStart = bundle.trimStart
+                    t.trimEnd = bundle.trimEnd
                     rebuilt.append(.track(t))
                 }
             }
@@ -583,6 +628,33 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         let usesDefaultCrossfadeDuration: Bool
         let tagColor: RGBAColor?
         let durationSeconds: TimeInterval?
+        let trimStart: TimeInterval
+        let trimEnd: TimeInterval?
+
+        init(bookmark: Data, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil) {
+            self.bookmark = bookmark
+            self.crossfadeEnabled = crossfadeEnabled
+            self.crossfadeDuration = crossfadeDuration
+            self.usesDefaultCrossfadeEnabled = usesDefaultCrossfadeEnabled
+            self.usesDefaultCrossfadeDuration = usesDefaultCrossfadeDuration
+            self.tagColor = tagColor
+            self.durationSeconds = durationSeconds
+            self.trimStart = trimStart
+            self.trimEnd = trimEnd
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bookmark = try c.decode(Data.self, forKey: .bookmark)
+            crossfadeEnabled = try c.decode(Bool.self, forKey: .crossfadeEnabled)
+            crossfadeDuration = try c.decode(TimeInterval.self, forKey: .crossfadeDuration)
+            usesDefaultCrossfadeEnabled = try c.decode(Bool.self, forKey: .usesDefaultCrossfadeEnabled)
+            usesDefaultCrossfadeDuration = try c.decode(Bool.self, forKey: .usesDefaultCrossfadeDuration)
+            tagColor = try c.decodeIfPresent(RGBAColor.self, forKey: .tagColor)
+            durationSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .durationSeconds)
+            trimStart = (try? c.decode(TimeInterval.self, forKey: .trimStart)) ?? 0
+            trimEnd = try? c.decode(TimeInterval.self, forKey: .trimEnd)
+        }
     }
     
     struct DefaultsBundle: Codable {
@@ -619,6 +691,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
 extension PlayoutViewModel: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        markCurrentAsPlayed()
         isPlaying = false
         stopTimeUpdates()
         // Advance unless next is a pause
@@ -649,6 +722,13 @@ struct ContentView: View {
     @State private var editingCrossfadeIndex: Int? = nil
     @State private var pendingCrossfadeDuration: Double = 1.0
 
+    @State private var showingTrimEditor = false
+    @State private var editingTrimIndex: Int? = nil
+    @State private var pendingTrimStart: Double = 0
+    @State private var pendingTrimEnd: Double = 0
+    @State private var pendingTrimEndEnabled: Bool = false
+    @State private var trimEditorDuration: Double = 60
+
     @State private var dropTargetIndex: Int? = nil
     
     @State private var showingSettings = false
@@ -664,69 +744,121 @@ struct ContentView: View {
         let index: Int
         let item: PlaylistItem
         let isCurrent: Bool
+        let isPlayed: Bool
         let onPlay: () -> Void
         let onInsertPauseBefore: () -> Void
         let onInsertPauseAfter: () -> Void
         let onToggleCrossfade: () -> Void
         let onEditCrossfade: () -> Void
+        let onEditTrim: () -> Void
         let onRemove: () -> Void
         let onRemovePause: () -> Void
         let onSetColor: (RGBAColor?) -> Void
 
         var body: some View {
-            HStack {
-                if isCurrent { Image(systemName: "speaker.wave.2.fill").foregroundStyle(.tint) }
-                if case .track(let t) = item, let rgba = t.tagColor {
-                    Circle().fill(Color(rgba)).frame(width: 10, height: 10)
+            if item.isPause {
+                pauseRow
+            } else if case .track(let t) = item {
+                trackRow(t)
+            }
+        }
+
+        @ViewBuilder
+        private func trackRow(_ t: Track) -> some View {
+            let isTrimmed = t.trimStart > 0 || t.trimEnd != nil
+            let displayDuration = t.effectiveDuration ?? t.durationSeconds
+            HStack(spacing: 10) {
+                // Track index
+                Text("\(index + 1)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 26, alignment: .trailing)
+                // Status icon (fixed width to keep title aligned)
+                ZStack {
+                    if isCurrent {
+                        Image(systemName: "speaker.wave.2.fill").foregroundStyle(.red)
+                    } else if isPlayed {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
                 }
-                Text(item.displayName)
-                    .font(item.isPause ? .body.italic() : .body)
-                    .foregroundStyle(item.isPause ? .red : .primary)
+                .frame(width: 16)
+                // Title
+                Text(t.title)
+                    .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer()
-                if case .track(let t) = item, let d = t.durationSeconds {
-                    Text(timeStringStatic(d))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .frame(minWidth: 60, alignment: .trailing)
+                // Duration with optional trim indicator
+                if let d = displayDuration {
+                    HStack(spacing: 3) {
+                        if isTrimmed { Image(systemName: "scissors").font(.caption2) }
+                        Text(timeStringStatic(d))
+                            .font(.callout.monospacedDigit())
+                            .frame(minWidth: 50, alignment: .trailing)
+                    }
+                    .foregroundStyle(isTrimmed ? Color.orange : Color.secondary)
                 }
-                if case .track(let t) = item, t.crossfadeEnabled {
+                // CF badge
+                if t.crossfadeEnabled {
                     Text("CF")
-                        .font(.caption2).bold()
-                        .padding(.horizontal, 6)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(.tint)
                 }
             }
+            .padding(.vertical, 7)
+            .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
+            .background(isCurrent ? Color.red.opacity(0.08) : Color.clear)
+            .overlay(alignment: .leading) {
+                if let rgba = t.tagColor {
+                    Rectangle().fill(Color(rgba)).frame(width: 3)
+                }
+            }
             .contentShape(Rectangle())
-            .modifier(PauseTint(isPause: item.isPause))
             .onTapGesture(count: 2) { onPlay() }
             .contextMenu {
-                if case .track = item {
-                    Button("Play", action: onPlay)
-                    Divider()
-                }
+                Button("Play", action: onPlay)
+                Divider()
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
-                switch item {
-                case .track:
-                    Button(isCrossfadeEnabled ? "Disable Crossfade" : "Enable Crossfade", action: onToggleCrossfade)
-                    Button("Set Crossfade Duration…", action: onEditCrossfade)
-                    Menu("Tag Color") {
-                        Button("Red") { onSetColor(RGBAColor(Color.red)) }
-                        Button("Orange") { onSetColor(RGBAColor(Color.orange)) }
-                        Button("Yellow") { onSetColor(RGBAColor(Color.yellow)) }
-                        Button("Green") { onSetColor(RGBAColor(Color.green)) }
-                        Button("Blue") { onSetColor(RGBAColor(Color.blue)) }
-                        Button("Purple") { onSetColor(RGBAColor(Color.purple)) }
-                        Divider()
-                        Button("Clear") { onSetColor(nil) }
-                    }
-                    Button(role: .destructive, action: onRemove) { Label("Remove", systemImage: "trash") }
-                case .pause:
-                    Button(role: .destructive, action: onRemovePause) { Label("Remove Pause", systemImage: "trash") }
+                Button(t.crossfadeEnabled ? "Disable Crossfade" : "Enable Crossfade", action: onToggleCrossfade)
+                Button("Set Crossfade Duration…", action: onEditCrossfade)
+                Button("Set Trim Points…", action: onEditTrim)
+                Menu("Tag Color") {
+                    Button("Red") { onSetColor(RGBAColor(Color.red)) }
+                    Button("Orange") { onSetColor(RGBAColor(Color.orange)) }
+                    Button("Yellow") { onSetColor(RGBAColor(Color.yellow)) }
+                    Button("Green") { onSetColor(RGBAColor(Color.green)) }
+                    Button("Blue") { onSetColor(RGBAColor(Color.blue)) }
+                    Button("Purple") { onSetColor(RGBAColor(Color.purple)) }
+                    Divider()
+                    Button("Clear") { onSetColor(nil) }
                 }
+                Button(role: .destructive, action: onRemove) { Label("Remove", systemImage: "trash") }
+            }
+        }
+
+        @ViewBuilder
+        private var pauseRow: some View {
+            ZStack {
+                Divider()
+                HStack(spacing: 5) {
+                    Image(systemName: "pause.fill").font(.caption2.bold())
+                    Text("PAUSE").font(.caption.bold()).tracking(1.5)
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.orange.opacity(0.12)))
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+            .contextMenu {
+                Button("Insert Pause Before", action: onInsertPauseBefore)
+                Button("Insert Pause After", action: onInsertPauseAfter)
+                Button(role: .destructive, action: onRemovePause) { Label("Remove Pause", systemImage: "trash") }
             }
         }
 
@@ -734,7 +866,7 @@ struct ContentView: View {
             if case .track(let t) = item { return t.crossfadeEnabled }
             return false
         }
-        
+
         private func timeStringStatic(_ t: TimeInterval) -> String {
             let total = Int(t)
             let s = total % 60
@@ -805,6 +937,9 @@ struct ContentView: View {
                 .padding()
                 .frame(minWidth: 320)
             }
+            .sheet(isPresented: $showingTrimEditor) {
+                trimEditorSheet
+            }
             .sheet(isPresented: $showingSettings) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Playback Defaults").font(.title2).bold()
@@ -860,7 +995,7 @@ struct ContentView: View {
         var total: TimeInterval = trackRemaining
         let afterCurrent = vm.currentIndex != nil ? startIdx + 1 : startIdx
         for i in afterCurrent..<vm.items.count {
-            if case .track(let t) = vm.items[i], let d = t.durationSeconds { total += d }
+            if case .track(let t) = vm.items[i], let d = t.effectiveDuration ?? t.durationSeconds { total += d }
         }
         return total
     }
@@ -873,6 +1008,7 @@ struct ContentView: View {
                     index: index,
                     item: item,
                     isCurrent: vm.currentIndex == index,
+                    isPlayed: { if case .track(let t) = item { return vm.playedTrackIDs.contains(t.id) }; return false }(),
                     onPlay: { vm.play(at: index) },
                     onInsertPauseBefore: { vm.addPause(at: index) },
                     onInsertPauseAfter: { vm.addPause(at: index + 1) },
@@ -889,6 +1025,22 @@ struct ContentView: View {
                             editingCrossfadeIndex = index
                             pendingCrossfadeDuration = t.crossfadeDuration
                             showingCrossfadeEditor = true
+                        }
+                    },
+                    onEditTrim: {
+                        if case .track(let t) = vm.items[index] {
+                            editingTrimIndex = index
+                            pendingTrimStart = t.trimStart
+                            let dur = t.durationSeconds ?? 60
+                            trimEditorDuration = dur
+                            if let te = t.trimEnd {
+                                pendingTrimEnd = te
+                                pendingTrimEndEnabled = true
+                            } else {
+                                pendingTrimEnd = dur
+                                pendingTrimEndEnabled = false
+                            }
+                            showingTrimEditor = true
                         }
                     },
                     onRemove: {
@@ -927,15 +1079,21 @@ struct ContentView: View {
         if !vm.items.isEmpty {
             HStack {
                 Image(systemName: "clock")
-                Text("Total remaining: \(timeString(remainingPlaylistDuration))")
+                    .font(.body)
+                Text("Total remaining")
+                    .foregroundStyle(.secondary)
+                Text(timeString(remainingPlaylistDuration))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
                 Spacer()
                 let trackCount = vm.items.filter { if case .track = $0 { return true }; return false }.count
                 Text("\(trackCount) track\(trackCount == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.body)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.06))
         }
         }
     }
@@ -948,11 +1106,6 @@ struct ContentView: View {
                     .monospacedDigit()
                     .fontWeight(.semibold)
                 Spacer()
-                if remainingPlaylistDuration > 0 {
-                    let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
-                    Text("Ends ~\(endDate, format: .dateTime.hour().minute())")
-                        .foregroundStyle(.secondary)
-                }
             }
             .font(.callout)
             .padding(.horizontal)
@@ -961,12 +1114,12 @@ struct ContentView: View {
 
             // Progress bar + time display
             VStack(spacing: 4) {
-                Slider(value: Binding(get: { vm.duration > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.duration > 0 ? vm.duration : 1))
+                Slider(value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1))
                 HStack {
                     Text(timeString(vm.currentTime))
                         .monospacedDigit()
                     Spacer()
-                    let remaining = max(0, vm.duration - vm.currentTime)
+                    let remaining = max(0, vm.effectiveEnd - vm.currentTime)
                     Text("-" + timeString(remaining))
                         .monospacedDigit()
                         .padding(.horizontal, 8)
@@ -1201,6 +1354,70 @@ struct ContentView: View {
         .frame(minWidth: 400, minHeight: 500)
     }
 
+    private var trimEditorSheet: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Trim Track").font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("In point (start offset)")
+                    Spacer()
+                    Text(timeString(pendingTrimStart))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: $pendingTrimStart, in: 0...max(trimEditorDuration - 1, 1), step: 0.5)
+                    .onChange(of: pendingTrimStart) { v in
+                        if pendingTrimEndEnabled && pendingTrimEnd <= v { pendingTrimEnd = min(v + 1, trimEditorDuration) }
+                    }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Toggle("Out point (early end)", isOn: $pendingTrimEndEnabled)
+                    Spacer()
+                    if pendingTrimEndEnabled {
+                        Text(timeString(pendingTrimEnd))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if pendingTrimEndEnabled {
+                    Slider(value: $pendingTrimEnd, in: max(pendingTrimStart + 1, 1)...max(trimEditorDuration, pendingTrimStart + 2), step: 0.5)
+                }
+            }
+
+            if pendingTrimStart > 0 || pendingTrimEndEnabled {
+                let effective = (pendingTrimEndEnabled ? pendingTrimEnd : trimEditorDuration) - pendingTrimStart
+                Text("Effective duration: \(timeString(max(0, effective)))")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Button("Clear Trim") {
+                    pendingTrimStart = 0
+                    pendingTrimEnd = trimEditorDuration
+                    pendingTrimEndEnabled = false
+                }
+                Spacer()
+                Button("Cancel") { showingTrimEditor = false }
+                Button("Save") {
+                    if let i = editingTrimIndex, vm.items.indices.contains(i), case .track(var t) = vm.items[i] {
+                        t.trimStart = pendingTrimStart
+                        t.trimEnd = pendingTrimEndEnabled ? pendingTrimEnd : nil
+                        vm.items[i] = .track(t)
+                        vm.savePlaylist()
+                    }
+                    showingTrimEditor = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 380)
+    }
+
     private struct ShortcutRow: View {
         let key: String
         let description: String
@@ -1235,16 +1452,6 @@ struct ContentView: View {
         vm.savePlaylist()
     }
     
-    private struct PauseTint: ViewModifier {
-        let isPause: Bool
-        func body(content: Content) -> some View {
-            if isPause {
-                content.foregroundStyle(.red)
-            } else {
-                content
-            }
-        }
-    }
 }
 
 struct FilePickerBridge: View {
