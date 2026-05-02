@@ -933,16 +933,16 @@ struct ContentView: View {
                 // ON AIR
                 VStack(alignment: .leading, spacing: 8) {
                     Label(vm.isPlaying ? "ON AIR" : "CUE", systemImage: vm.isPlaying ? "dot.radiowaves.left.and.right" : "pause.circle")
-                        .font(.subheadline.bold())
+                        .font(.title3.bold())
                         .foregroundStyle(vm.isPlaying ? .red : .secondary)
                     if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
                         Text(vm.items[idx].displayName)
-                            .font(.title.bold())
+                            .font(.system(size: 28, weight: .bold))
                             .lineLimit(3)
                             .foregroundStyle(vm.isNearingEnd ? .white : .primary)
                     } else {
                         Text("—")
-                            .font(.title.bold())
+                            .font(.system(size: 28, weight: .bold))
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
@@ -959,17 +959,17 @@ struct ContentView: View {
                 // NEXT
                 VStack(alignment: .leading, spacing: 8) {
                     Label("NEXT", systemImage: "forward.fill")
-                        .font(.subheadline.bold())
+                        .font(.title3.bold())
                         .foregroundStyle(.secondary)
                     if let idx = vm.currentIndex, vm.items.indices.contains(idx + 1) {
                         let nextItem = vm.items[idx + 1]
                         Text(nextItem.displayName)
-                            .font(.title.bold())
+                            .font(.system(size: 28, weight: .bold))
                             .lineLimit(3)
                             .foregroundStyle(nextItem.isPause ? .orange : .primary)
                     } else {
                         Text("End of playlist")
-                            .font(.title.bold())
+                            .font(.system(size: 28, weight: .bold))
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
@@ -979,7 +979,7 @@ struct ContentView: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
             }
-            .frame(minHeight: 90)
+            .frame(minHeight: 120)
             .padding(.horizontal)
             .padding(.top, 10)
 
