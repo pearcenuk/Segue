@@ -335,7 +335,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     func seekToNearEnd(secondsFromEnd: TimeInterval = 10) {
         guard let p = player else { return }
-        p.currentTime = max(0, p.duration - secondsFromEnd)
+        let end: TimeInterval
+        if let idx = currentIndex, case .track(let t) = items[idx], let trimEnd = t.trimEnd {
+            end = trimEnd
+        } else {
+            end = p.duration
+        }
+        p.currentTime = max(0, end - secondsFromEnd)
         currentTime = p.currentTime
     }
 
@@ -1134,25 +1140,29 @@ struct ContentView: View {
     private var controls: some View {
         VStack(spacing: 0) {
             // Clock bar
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("CLOCK")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                    Text(currentDate, format: .dateTime.hour().minute().second())
-                        .font(.callout.weight(.semibold).monospacedDigit())
-                }
+            HStack(alignment: .bottom, spacing: 0) {
                 Spacer()
-                if remainingPlaylistDuration > 0 {
-                    let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text("SHOW ENDS ~")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                        Text(endDate, format: .dateTime.hour().minute())
-                            .font(.callout.weight(.semibold).monospacedDigit())
+                HStack(alignment: .bottom, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("CLOCK")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(currentDate, format: .dateTime.hour().minute().second())
+                            .font(.title3.weight(.semibold).monospacedDigit())
+                    }
+                    if remainingPlaylistDuration > 0 {
+                        Divider().frame(height: 36)
+                        let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("SHOW ENDS ~")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(endDate, format: .dateTime.hour().minute().second())
+                                .font(.title3.weight(.semibold).monospacedDigit())
+                        }
                     }
                 }
+                Spacer()
             }
             .padding(.horizontal)
             .padding(.top, 8)
