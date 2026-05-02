@@ -842,18 +842,15 @@ struct ContentView: View {
 
         @ViewBuilder
         private var pauseRow: some View {
-            ZStack {
-                Divider()
-                HStack(spacing: 5) {
-                    Image(systemName: "pause.fill").font(.caption2.bold())
-                    Text("PAUSE").font(.caption.bold()).tracking(1.5)
-                }
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.orange.opacity(0.12)))
+            HStack(spacing: 10) {
+                Text("")
+                    .frame(width: 26)
+                Text("Pause")
+                    .font(.body.italic())
+                    .foregroundStyle(.red)
+                Spacer()
             }
-            .padding(.vertical, 3)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
             .contextMenu {
                 Button("Insert Pause Before", action: onInsertPauseBefore)
