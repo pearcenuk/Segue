@@ -897,7 +897,7 @@ struct ContentView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 playlistView
-                Divider()
+                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 2)
                 controls
             }
             .navigationTitle("Pod Playout")
@@ -1122,7 +1122,9 @@ struct ContentView: View {
             .font(.callout)
             .padding(.horizontal)
             .padding(.top, 8)
-            .padding(.bottom, 4)
+            .padding(.bottom, 6)
+
+            Divider().opacity(0.4)
 
             // Progress bar + time display
             VStack(spacing: 4) {
@@ -1143,6 +1145,9 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            Divider().opacity(0.4)
 
             // ON AIR / NEXT panels
             HStack(spacing: 12) {
@@ -1203,6 +1208,9 @@ struct ContentView: View {
             .frame(minHeight: 120)
             .padding(.horizontal)
             .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            Divider().opacity(0.4)
 
             // Transport controls
             HStack(spacing: 0) {
@@ -1230,6 +1238,7 @@ struct ContentView: View {
             .padding(.horizontal)
             .padding(.vertical, 10)
         }
+        .background(Color.white.opacity(0.03))
         .onReceive(clockTimer) { date in currentDate = date }
         .onChange(of: vm.isNearingEnd) { nearing in
             if nearing {
