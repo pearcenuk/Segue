@@ -657,6 +657,8 @@ struct ContentView: View {
     @State private var lastExportDirectory: URL? = nil
     @State private var flashBright = false
     @State private var showingKeyboardShortcuts = false
+    @State private var currentDate = Date()
+    private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private struct PlaylistRow: View {
         let index: Int
@@ -852,7 +854,19 @@ struct ContentView: View {
         }
     }
 
+    private var remainingPlaylistDuration: TimeInterval {
+        let startIdx = vm.currentIndex ?? 0
+        let trackRemaining = max(0, vm.duration - vm.currentTime)
+        var total: TimeInterval = trackRemaining
+        let afterCurrent = vm.currentIndex != nil ? startIdx + 1 : startIdx
+        for i in afterCurrent..<vm.items.count {
+            if case .track(let t) = vm.items[i], let d = t.durationSeconds { total += d }
+        }
+        return total
+    }
+
     private var playlistView: some View {
+        VStack(spacing: 0) {
         List {
             ForEach(Array(vm.items.enumerated()), id: \.offset) { index, item in
                 PlaylistRow(
@@ -910,10 +924,41 @@ struct ContentView: View {
             .onDelete { offsets in vm.remove(atOffsets: offsets) }
         }
         .listStyle(.inset)
+        if !vm.items.isEmpty {
+            HStack {
+                Image(systemName: "clock")
+                Text("Total remaining: \(timeString(remainingPlaylistDuration))")
+                Spacer()
+                let trackCount = vm.items.filter { if case .track = $0 { return true }; return false }.count
+                Text("\(trackCount) track\(trackCount == 1 ? "" : "s")")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+        }
     }
 
     private var controls: some View {
         VStack(spacing: 0) {
+            // Clock bar
+            HStack {
+                Text(currentDate, format: .dateTime.hour().minute().second())
+                    .monospacedDigit()
+                    .fontWeight(.semibold)
+                Spacer()
+                if remainingPlaylistDuration > 0 {
+                    let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
+                    Text("Ends ~\(endDate, format: .dateTime.hour().minute())")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.callout)
+            .padding(.horizontal)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
             // Progress bar + time display
             VStack(spacing: 4) {
                 Slider(value: Binding(get: { vm.duration > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.duration > 0 ? vm.duration : 1))
@@ -1015,6 +1060,7 @@ struct ContentView: View {
             .padding(.horizontal)
             .padding(.vertical, 10)
         }
+        .onReceive(clockTimer) { date in currentDate = date }
         .onChange(of: vm.isNearingEnd) { nearing in
             if nearing {
                 withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
