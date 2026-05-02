@@ -147,7 +147,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var items: [PlaylistItem] = []
     @Published var currentIndex: Int? = nil
     @Published var isPlaying: Bool = false
-    @Published var autoAdvance: Bool = true
+    private var isCrossfading = false
 
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
@@ -426,19 +426,17 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.currentTime = p.currentTime
             self.duration = p.duration
 
-            if self.autoAdvance, let idx = self.currentIndex {
+            if !self.isCrossfading, let idx = self.currentIndex {
                 let remaining = max(0, self.duration - self.currentTime)
                 let nextIdx = idx + 1
                 if remaining <= 0.05 { return } // let delegate handle end
                 if self.items.indices.contains(nextIdx), case .track(let incoming) = self.items[nextIdx], incoming.crossfadeEnabled {
                     if remaining <= incoming.crossfadeDuration {
-                        // Prevent re-trigger by disabling autoAdvance temporarily
-                        self.autoAdvance = false
+                        self.isCrossfading = true
                         self.currentIndex = nextIdx
                         self.crossfadeTo(url: incoming.url, duration: max(0.1, incoming.crossfadeDuration))
-                        // Re-enable autoAdvance after a short delay
                         DispatchQueue.main.asyncAfter(deadline: .now() + incoming.crossfadeDuration + 0.1) {
-                            self.autoAdvance = true
+                            self.isCrossfading = false
                         }
                     }
                 }
@@ -624,8 +622,7 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         isPlaying = false
         stopTimeUpdates()
-        guard autoAdvance else { return }
-        // Advance unless next is a pause (we'll stop on pause when play() called)
+        // Advance unless next is a pause
         if let idx = currentIndex {
             let nextIdx = idx + 1
             if items.indices.contains(nextIdx) {
@@ -1000,9 +997,6 @@ struct ContentView: View {
 
             // Transport controls
             HStack(spacing: 0) {
-                Toggle("Auto", isOn: $vm.autoAdvance)
-                    .toggleStyle(.button)
-                    .controlSize(.small)
                 Spacer()
                 HStack(spacing: 20) {
                     Button { vm.previous() } label: { Image(systemName: "backward.fill").font(.title3) }
