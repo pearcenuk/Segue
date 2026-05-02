@@ -231,8 +231,17 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         if isPlaying {
             pause()
         } else {
-            if currentIndex == nil { currentIndex = items.isEmpty ? nil : 0 }
-            play()
+            // If we have a paused player, resume it instead of restarting
+            if let p = player {
+                p.play()
+                isPlaying = true
+                startTimeUpdates()
+                fade(to: 1.0)
+            } else {
+                // No player exists, start fresh
+                if currentIndex == nil { currentIndex = items.isEmpty ? nil : 0 }
+                play()
+            }
         }
     }
 
@@ -651,6 +660,7 @@ struct ContentView: View {
     @State private var showingExport = false
     @State private var lastExportDirectory: URL? = nil
     @State private var isFlashingRemaining = false
+    @State private var showingKeyboardShortcuts = false
 
     private struct PlaylistRow: View {
         let index: Int
@@ -838,6 +848,13 @@ struct ContentView: View {
                 }) {
                     showingExport = false
                 }
+            }
+            .sheet(isPresented: $showingKeyboardShortcuts) {
+                keyboardShortcutsSheet
+            }
+            .onKeyPress(.init("?")) { press in
+                showingKeyboardShortcuts = true
+                return .handled
             }
         }
     }
@@ -1045,6 +1062,75 @@ struct ContentView: View {
         }
         .help("Clear all tracks from playlist")
         .disabled(vm.items.isEmpty)
+    }
+
+    private var keyboardShortcutsSheet: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Keyboard Shortcuts")
+                .font(.title2)
+                .bold()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Group {
+                    Text("Playback").font(.headline)
+                    ShortcutRow(key: "Space", description: "Play / Pause")
+                    ShortcutRow(key: "⌘ + ←", description: "Previous track")
+                    ShortcutRow(key: "⌘ + →", description: "Next track")
+                }
+
+                Divider().padding(.vertical, 4)
+
+                Group {
+                    Text("Playlist").font(.headline)
+                    ShortcutRow(key: "⌘ + O", description: "Add audio files")
+                    ShortcutRow(key: "⌘ + L", description: "Import playlist")
+                    ShortcutRow(key: "⌘ + S", description: "Export playlist")
+                }
+
+                Divider().padding(.vertical, 4)
+
+                Group {
+                    Text("Track Actions").font(.headline)
+                    ShortcutRow(key: "Double-click", description: "Play track")
+                    ShortcutRow(key: "Right-click", description: "Show context menu")
+                }
+
+                Divider().padding(.vertical, 4)
+
+                Group {
+                    Text("Other").font(.headline)
+                    ShortcutRow(key: "?", description: "Show this help")
+                }
+            }
+
+            Spacer()
+
+            HStack {
+                Spacer()
+                Button("Close") {
+                    showingKeyboardShortcuts = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 400, minHeight: 500)
+    }
+
+    private struct ShortcutRow: View {
+        let key: String
+        let description: String
+
+        var body: some View {
+            HStack {
+                Text(key)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 120, alignment: .leading)
+                Text(description)
+                Spacer()
+            }
+        }
     }
 
     private func timeString(_ t: TimeInterval) -> String {
