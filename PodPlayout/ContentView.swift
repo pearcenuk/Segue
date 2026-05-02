@@ -816,7 +816,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
-            .background(isCurrent ? Color.red.opacity(0.08) : Color.clear)
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.white.opacity(0.03) : Color.clear))
             .overlay(alignment: .leading) {
                 if let rgba = t.tagColor {
                     Rectangle().fill(Color(rgba)).frame(width: 3)
@@ -1163,7 +1163,7 @@ struct ContentView: View {
                     }
                     if vm.effectiveEnd > 0 {
                         Text("\(timeString(vm.currentTime)) / \(timeString(vm.effectiveEnd))")
-                            .font(.callout.monospacedDigit())
+                            .font(.system(size: 28, weight: .semibold).monospacedDigit())
                             .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
                     }
                     Spacer(minLength: 0)
@@ -1350,6 +1350,7 @@ struct ContentView: View {
                     ShortcutRow(key: "⌘ + O", description: "Add audio files")
                     ShortcutRow(key: "⌘ + L", description: "Import playlist")
                     ShortcutRow(key: "⌘ + S", description: "Export playlist")
+                    ShortcutRow(key: "⇧ + ⌘ + R", description: "Reset session (keep tracks, clear played)")
                 }
 
                 Divider().padding(.vertical, 4)
