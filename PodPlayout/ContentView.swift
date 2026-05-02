@@ -1109,7 +1109,15 @@ struct ContentView: View {
                 ) { providers in
                     handleDrop(providers: providers, to: index)
                 }
-                .background(dropTargetIndex == index ? RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.1)) : nil)
+                .overlay(alignment: .top) {
+                    if dropTargetIndex == index {
+                        Rectangle()
+                            .fill(Color.accentColor)
+                            .frame(height: 2)
+                            .shadow(color: Color.accentColor.opacity(0.6), radius: 4, y: 0)
+                    }
+                }
+                .background(dropTargetIndex == index ? Color.accentColor.opacity(0.08) : Color.clear)
             }
             .onMove { from, to in vm.move(from: from, to: to) }
             .onDelete { offsets in vm.remove(atOffsets: offsets) }
