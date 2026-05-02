@@ -816,7 +816,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.white.opacity(0.03) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.white.opacity(0.05) : Color.clear))
             .overlay(alignment: .leading) {
                 if let rgba = t.tagColor {
                     Rectangle().fill(Color(rgba)).frame(width: 3)
