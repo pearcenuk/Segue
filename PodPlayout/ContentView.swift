@@ -917,95 +917,113 @@ struct ContentView: View {
     }
 
     private var controls: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
+            // Progress bar + time display
             VStack(spacing: 4) {
                 Slider(value: Binding(get: { vm.duration > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.duration > 0 ? vm.duration : 1))
                 HStack {
                     Text(timeString(vm.currentTime))
+                        .monospacedDigit()
                     Spacer()
                     let remaining = max(0, vm.duration - vm.currentTime)
-                    Text(timeString(remaining))
+                    Text("-" + timeString(remaining))
+                        .monospacedDigit()
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.red.opacity(isFlashingRemaining ? 0.5 : 0))
-                        )
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(isFlashingRemaining ? 0.5 : 0)))
                         .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
                         .onChange(of: remaining) { newValue in
                             let shouldFlash = newValue > 0 && newValue <= 30
-                            if shouldFlash && !isFlashingRemaining {
-                                isFlashingRemaining = true
-                            } else if !shouldFlash && isFlashingRemaining {
-                                isFlashingRemaining = false
-                            }
+                            if shouldFlash && !isFlashingRemaining { isFlashingRemaining = true }
+                            else if !shouldFlash && isFlashingRemaining { isFlashingRemaining = false }
                         }
                 }
-                .font(.title)
+                .font(.body)
                 .foregroundStyle(.secondary)
             }
-            HStack(spacing: 24) {
-                Button { vm.previous() } label: { Label("Previous", systemImage: "backward.fill") }
-                    .disabled(vm.items.isEmpty)
-                    .keyboardShortcut(.leftArrow, modifiers: [.command])
-                Button {
-                    vm.togglePlayPause()
-                } label: {
-                    Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(vm.items.isEmpty)
-                .keyboardShortcut(.space, modifiers: [])
-                Button { vm.next() } label: { Label("Next", systemImage: "forward.fill") }
-                    .disabled(vm.items.isEmpty)
-                    .keyboardShortcut(.rightArrow, modifiers: [.command])
-            }
-            Toggle("Auto-advance", isOn: $vm.autoAdvance)
+            .padding(.horizontal)
+            .padding(.top, 10)
 
-            // Now Playing - Super Visible
-            VStack(spacing: 6) {
-                if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
-                    Text(vm.items[idx].displayName)
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(isFlashingRemaining ? .white : .primary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(isFlashingRemaining ? Color.red : Color.clear)
-                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
-                        )
-
-                    let nextIdx = idx + 1
-                    if vm.items.indices.contains(nextIdx) {
-                        HStack(spacing: 6) {
-                            Text("Next:")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(vm.items[nextIdx].displayName)
-                                .font(.caption)
-                                .foregroundStyle(vm.items[nextIdx].isPause ? .red : .secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
+            // ON AIR / NEXT panels
+            HStack(spacing: 12) {
+                // ON AIR
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(vm.isPlaying ? "ON AIR" : "CUE", systemImage: vm.isPlaying ? "dot.radiowaves.left.and.right" : "pause.circle")
+                        .font(.caption.bold())
+                        .foregroundStyle(vm.isPlaying ? .red : .secondary)
+                    if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
+                        Text(vm.items[idx].displayName)
+                            .font(.title3.bold())
+                            .lineLimit(3)
+                            .foregroundStyle(isFlashingRemaining ? .white : .primary)
+                    } else {
+                        Text("—")
+                            .font(.title3.bold())
+                            .foregroundStyle(.tertiary)
                     }
-                } else {
-                    Text("No Track Playing")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 12)
+                    Spacer(minLength: 0)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(isFlashingRemaining ? Color.red : (vm.isPlaying ? Color.red.opacity(0.08) : Color.secondary.opacity(0.08)))
+                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
+                )
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.4) : Color.secondary.opacity(0.2), lineWidth: 1))
+
+                // NEXT
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("NEXT", systemImage: "forward.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    if let idx = vm.currentIndex, vm.items.indices.contains(idx + 1) {
+                        let nextItem = vm.items[idx + 1]
+                        Text(nextItem.displayName)
+                            .font(.title3.bold())
+                            .lineLimit(3)
+                            .foregroundStyle(nextItem.isPause ? .orange : .primary)
+                    } else {
+                        Text("End of playlist")
+                            .font(.title3.bold())
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
             }
+            .frame(minHeight: 90)
+            .padding(.horizontal)
+            .padding(.top, 10)
+
+            // Transport controls
+            HStack(spacing: 0) {
+                Toggle("Auto", isOn: $vm.autoAdvance)
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                Spacer()
+                HStack(spacing: 20) {
+                    Button { vm.previous() } label: { Image(systemName: "backward.fill").font(.title3) }
+                        .disabled(vm.items.isEmpty)
+                        .keyboardShortcut(.leftArrow, modifiers: [.command])
+                    Button { vm.togglePlayPause() } label: {
+                        Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title2)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(vm.items.isEmpty)
+                    .keyboardShortcut(.space, modifiers: [])
+                    Button { vm.next() } label: { Image(systemName: "forward.fill").font(.title3) }
+                        .disabled(vm.items.isEmpty)
+                        .keyboardShortcut(.rightArrow, modifiers: [.command])
+                }
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
         }
-        .padding()
         .onChange(of: vm.isPlaying) { playing in
             if !playing { isFlashingRemaining = false }
         }
