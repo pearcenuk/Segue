@@ -660,6 +660,7 @@ struct ContentView: View {
     @State private var showingExport = false
     @State private var lastExportDirectory: URL? = nil
     @State private var isFlashingRemaining = false
+    @State private var flashBright = false
     @State private var showingKeyboardShortcuts = false
 
     private struct PlaylistRow: View {
@@ -930,8 +931,7 @@ struct ContentView: View {
                         .monospacedDigit()
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(isFlashingRemaining ? 0.5 : 0)))
-                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(flashBright ? 0.5 : 0)))
                         .onChange(of: remaining) { newValue in
                             let shouldFlash = newValue > 0 && newValue <= 30
                             if shouldFlash && !isFlashingRemaining { isFlashingRemaining = true }
@@ -953,12 +953,12 @@ struct ContentView: View {
                         .foregroundStyle(vm.isPlaying ? .red : .secondary)
                     if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
                         Text(vm.items[idx].displayName)
-                            .font(.title3.bold())
+                            .font(.title2.bold())
                             .lineLimit(3)
-                            .foregroundStyle(isFlashingRemaining ? .white : .primary)
+                            .foregroundStyle(flashBright ? .white : .primary)
                     } else {
                         Text("—")
-                            .font(.title3.bold())
+                            .font(.title2.bold())
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
@@ -967,8 +967,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(isFlashingRemaining ? Color.red : (vm.isPlaying ? Color.red.opacity(0.08) : Color.secondary.opacity(0.08)))
-                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
+                        .fill(flashBright ? Color.red : (vm.isPlaying ? Color.red.opacity(0.08) : Color.secondary.opacity(0.08)))
                 )
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.4) : Color.secondary.opacity(0.2), lineWidth: 1))
 
@@ -980,12 +979,12 @@ struct ContentView: View {
                     if let idx = vm.currentIndex, vm.items.indices.contains(idx + 1) {
                         let nextItem = vm.items[idx + 1]
                         Text(nextItem.displayName)
-                            .font(.title3.bold())
+                            .font(.title2.bold())
                             .lineLimit(3)
                             .foregroundStyle(nextItem.isPause ? .orange : .primary)
                     } else {
                         Text("End of playlist")
-                            .font(.title3.bold())
+                            .font(.title2.bold())
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
@@ -1025,10 +1024,23 @@ struct ContentView: View {
             .padding(.vertical, 10)
         }
         .onChange(of: vm.isPlaying) { playing in
-            if !playing { isFlashingRemaining = false }
+            if !playing {
+                isFlashingRemaining = false
+                withAnimation(.none) { flashBright = false }
+            }
         }
         .onChange(of: vm.currentIndex) { _ in
             isFlashingRemaining = false
+            withAnimation(.none) { flashBright = false }
+        }
+        .onChange(of: isFlashingRemaining) { flashing in
+            if flashing {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                    flashBright = true
+                }
+            } else {
+                withAnimation(.none) { flashBright = false }
+            }
         }
     }
 
