@@ -60,6 +60,7 @@ struct Track: Identifiable, Equatable {
     var trimStart: TimeInterval = 0
     var trimEnd: TimeInterval? = nil
     var isMissing: Bool = false
+    var normalizeGain: Float? = nil  // linear gain to reach -23 dBFS RMS target; nil = not yet scanned
 
     var effectiveDuration: TimeInterval? {
         guard let d = durationSeconds else { return nil }
@@ -171,6 +172,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var meterPeaks: [Float] = [0, 0]
     private var peakHoldCounters: [Int] = [0, 0]
 
+    @Published var scanningTrackIDs: Set<UUID> = []
+
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
     private var timeLink: CADisplayLinkLike?
@@ -199,6 +202,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
         items.append(contentsOf: newItems)
         savePlaylist()
+        let newIDs = newItems.compactMap { if case .track(let t) = $0 { return t.id } else { return nil } }
+        scanTracks(newIDs)
     }
 
     func resetSession() {
@@ -270,7 +275,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 p.play()
                 isPlaying = true
                 startTimeUpdates()
-                fade(to: 1.0)
+                let resumeVol: Float
+                if let idx = currentIndex, case .track(let t) = items[idx] {
+                    resumeVol = normVolume(for: t)
+                } else {
+                    resumeVol = 1.0
+                }
+                fade(to: resumeVol)
             } else {
                 // No player exists, start fresh
                 if currentIndex == nil { currentIndex = items.isEmpty ? nil : 0 }
@@ -388,13 +399,17 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             player?.isMeteringEnabled = true
             player?.prepareToPlay()
             player?.volume = 0
-            if let idx = currentIndex, case .track(let t) = items[idx], t.trimStart > 0 {
-                player?.currentTime = t.trimStart
+            let targetVol: Float
+            if let idx = currentIndex, case .track(let t) = items[idx] {
+                if t.trimStart > 0 { player?.currentTime = t.trimStart }
+                targetVol = normVolume(for: t)
+            } else {
+                targetVol = 1.0
             }
             player?.play()
             isPlaying = true
             startTimeUpdates()
-            fade(to: 1.0)
+            fade(to: targetVol)
         } catch {
             print("Failed to play: \(error)")
             isPlaying = false
@@ -416,21 +431,85 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         return (db - floor) / (-floor)
     }
 
-    private func crossfadeTo(url: URL, duration: TimeInterval) {
+    private func normVolume(for track: Track) -> Float {
+        guard let g = track.normalizeGain else { return 1.0 }
+        return min(1.0, g)  // AVAudioPlayer can't exceed 1.0, so we cut but never boost
+    }
+
+    func scanTracks(_ ids: [UUID]) {
+        for id in ids { scanTrack(id) }
+    }
+
+    private func scanTrack(_ trackID: UUID) {
+        guard !scanningTrackIDs.contains(trackID),
+              let idx = items.firstIndex(where: { $0.id == trackID }),
+              case .track(let t) = items[idx],
+              t.normalizeGain == nil else { return }
+        scanningTrackIDs.insert(trackID)
+        let url = t.url
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            let gain = self.computeNormalizeGain(url: url)
+            if accessing { url.stopAccessingSecurityScopedResource() }
+            DispatchQueue.main.async {
+                guard let idx = self.items.firstIndex(where: { $0.id == trackID }),
+                      case .track(var track) = self.items[idx] else {
+                    self.scanningTrackIDs.remove(trackID)
+                    return
+                }
+                track.normalizeGain = gain
+                self.items[idx] = .track(track)
+                self.scanningTrackIDs.remove(trackID)
+                self.savePlaylist()
+            }
+        }
+    }
+
+    private func computeNormalizeGain(url: URL) -> Float? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let format = file.processingFormat
+        let chunkFrames: AVAudioFrameCount = 44100
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames) else { return nil }
+        var sumSquares: Double = 0
+        var totalSamples: Int = 0
+        let channelCount = Int(format.channelCount)
+        while file.framePosition < file.length {
+            let remaining = AVAudioFrameCount(file.length - file.framePosition)
+            let toRead = min(chunkFrames, remaining)
+            buffer.frameLength = toRead
+            guard (try? file.read(into: buffer, frameCount: toRead)) != nil,
+                  let floatData = buffer.floatChannelData else { break }
+            for ch in 0..<channelCount {
+                for i in 0..<Int(toRead) {
+                    let s = Double(floatData[ch][i])
+                    sumSquares += s * s
+                }
+            }
+            totalSamples += Int(toRead) * channelCount
+        }
+        guard totalSamples > 0 else { return nil }
+        let rms = sqrt(sumSquares / Double(totalSamples))
+        guard rms > 1e-10 else { return nil }
+        let gainDB = -23.0 - 20.0 * log10(rms)  // how many dB to shift to reach -23 dBFS RMS
+        return Float(pow(10.0, gainDB / 20.0))
+    }
+
+    private func crossfadeTo(url: URL, duration: TimeInterval, targetVolume: Float = 1.0) {
         guard let current = player else { startPlayback(url: url); return }
         do {
             let next = try makePlayer(url: url, volume: 0)
             altPlayer = next
             next.play()
-            // Ramp both players
+            let startVolume = current.volume
             let steps = max(1, Int(duration * 30))
             let stepDuration = duration / Double(steps)
             var i = 0
             Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { timer in
                 i += 1
                 let t = min(1.0, Double(i)/Double(steps))
-                current.volume = Float(1.0 - t)
-                next.volume = Float(t)
+                current.volume = startVolume * Float(1.0 - t)
+                next.volume = targetVolume * Float(t)
                 if i >= steps {
                     timer.invalidate()
                     current.stop()
@@ -520,7 +599,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         self.isCrossfading = true
                         self.markCurrentAsPlayed()
                         self.currentIndex = nextIdx
-                        self.crossfadeTo(url: incoming.url, duration: max(0.1, incoming.crossfadeDuration))
+                        self.crossfadeTo(url: incoming.url, duration: max(0.1, incoming.crossfadeDuration), targetVolume: self.normVolume(for: incoming))
                         DispatchQueue.main.asyncAfter(deadline: .now() + incoming.crossfadeDuration + 0.1) {
                             self.isCrossfading = false
                         }
@@ -564,6 +643,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         t.durationSeconds = bundle.durationSeconds ?? t.durationSeconds
                         t.trimStart = bundle.trimStart
                         t.trimEnd = bundle.trimEnd
+                        t.normalizeGain = bundle.normalizeGain
                         let accessing = t.url.startAccessingSecurityScopedResource()
                         t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                         if accessing { t.url.stopAccessingSecurityScopedResource() }
@@ -581,10 +661,12 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 }
             }
             items = rebuilt
-            // If any bookmarks were stale, re-saving will refresh them
-            if anyStale {
-                savePlaylist()
+            if anyStale { savePlaylist() }
+            let unscanned = rebuilt.compactMap { item -> UUID? in
+                if case .track(let t) = item, t.normalizeGain == nil { return t.id }
+                return nil
             }
+            if !unscanned.isEmpty { scanTracks(unscanned) }
         } catch { print("Failed to load playlist: \(error)") }
     }
     
@@ -618,7 +700,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         tagColor: t.tagColor,
                         durationSeconds: t.durationSeconds,
                         trimStart: t.trimStart,
-                        trimEnd: t.trimEnd
+                        trimEnd: t.trimEnd,
+                        normalizeGain: t.normalizeGain
                     ))
                 } else { return nil }
             }
@@ -645,7 +728,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         tagColor: t.tagColor,
                         durationSeconds: t.durationSeconds,
                         trimStart: t.trimStart,
-                        trimEnd: t.trimEnd
+                        trimEnd: t.trimEnd,
+                        normalizeGain: t.normalizeGain
                     ))
                 } else { return nil }
             }
@@ -671,6 +755,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     t.durationSeconds = bundle.durationSeconds
                     t.trimStart = bundle.trimStart
                     t.trimEnd = bundle.trimEnd
+                    t.normalizeGain = bundle.normalizeGain
                     rebuilt.append(.track(t))
                 }
             }
@@ -689,8 +774,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         let durationSeconds: TimeInterval?
         let trimStart: TimeInterval
         let trimEnd: TimeInterval?
+        let normalizeGain: Float?
 
-        init(bookmark: Data, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil) {
+        init(bookmark: Data, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil, normalizeGain: Float? = nil) {
             self.bookmark = bookmark
             self.crossfadeEnabled = crossfadeEnabled
             self.crossfadeDuration = crossfadeDuration
@@ -700,6 +786,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.durationSeconds = durationSeconds
             self.trimStart = trimStart
             self.trimEnd = trimEnd
+            self.normalizeGain = normalizeGain
         }
 
         init(from decoder: Decoder) throws {
@@ -713,6 +800,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             durationSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .durationSeconds)
             trimStart = (try? c.decode(TimeInterval.self, forKey: .trimStart)) ?? 0
             trimEnd = try? c.decode(TimeInterval.self, forKey: .trimEnd)
+            normalizeGain = try? c.decode(Float.self, forKey: .normalizeGain)
         }
     }
     
@@ -871,6 +959,18 @@ struct ContentView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(.tint)
+                }
+                // Normalization badge
+                if let gain = t.normalizeGain {
+                    let gainDB = 20.0 * log10(Double(gain))
+                    let label = gainDB >= 0 ? String(format: "+%.1f", gainDB) : String(format: "%.1f", gainDB)
+                    Text(label)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.green.opacity(gain < 1.0 ? 0.15 : 0.08)))
+                        .foregroundStyle(Color.green.opacity(0.8))
+                        .help("Normalization: \(label) dB applied to reach −23 dBFS")
                 }
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
