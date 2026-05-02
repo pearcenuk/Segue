@@ -944,21 +944,33 @@ struct ContentView: View {
                     .keyboardShortcut(.rightArrow, modifiers: [.command])
             }
             Toggle("Auto-advance", isOn: $vm.autoAdvance)
-            HStack {
-                Button { vm.addPause() } label: { Label("Add Pause", systemImage: "pause") }
-                    .keyboardShortcut("p")
-                Spacer()
+
+            // Now Playing - Super Visible
+            VStack(spacing: 4) {
                 if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
-                    Text("Now Playing: \(vm.items[idx].displayName)")
-                        .font(.footnote)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.secondary)
+                    let remaining = max(0, vm.duration - vm.currentTime)
+                    Text(vm.items[idx].displayName)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(remaining <= 30 && remaining > 0 ? .white : .primary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(remaining <= 30 && remaining > 0 ? Color.red : Color.clear)
+                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: remaining <= 30 && remaining > 0)
+                        )
                 } else {
-                    Text("Idle").font(.footnote).foregroundStyle(.secondary)
+                    Text("No Track Playing")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 12)
                 }
             }
-            .padding(.horizontal)
         }
         .padding()
         .onChange(of: vm.isPlaying) { playing in
