@@ -151,6 +151,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
+    @Published var isNearingEnd: Bool = false
     
     @Published var defaultCrossfadeEnabled: Bool = false
     @Published var defaultCrossfadeDuration: TimeInterval = 1.0
@@ -426,6 +427,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.currentTime = p.currentTime
             self.duration = p.duration
 
+            let remaining = max(0, self.duration - self.currentTime)
+            self.isNearingEnd = remaining > 0 && remaining <= 30
+
             if !self.isCrossfading, let idx = self.currentIndex {
                 let remaining = max(0, self.duration - self.currentTime)
                 let nextIdx = idx + 1
@@ -448,6 +452,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         timeLink = nil
         currentTime = 0
         duration = 0
+        isNearingEnd = false
     }
 
     func loadPersistedPlaylist() {
@@ -656,7 +661,6 @@ struct ContentView: View {
     @State private var showingImport = false
     @State private var showingExport = false
     @State private var lastExportDirectory: URL? = nil
-    @State private var isFlashingRemaining = false
     @State private var flashBright = false
     @State private var showingKeyboardShortcuts = false
 
@@ -929,11 +933,6 @@ struct ContentView: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(flashBright ? 0.5 : 0)))
-                        .onChange(of: remaining) { newValue in
-                            let shouldFlash = newValue > 0 && newValue <= 30
-                            if shouldFlash && !isFlashingRemaining { isFlashingRemaining = true }
-                            else if !shouldFlash && isFlashingRemaining { isFlashingRemaining = false }
-                        }
                 }
                 .font(.body)
                 .foregroundStyle(.secondary)
@@ -952,7 +951,7 @@ struct ContentView: View {
                         Text(vm.items[idx].displayName)
                             .font(.title2.bold())
                             .lineLimit(3)
-                            .foregroundStyle(flashBright ? .white : .primary)
+                            .foregroundStyle(vm.isNearingEnd ? .white : .primary)
                     } else {
                         Text("—")
                             .font(.title2.bold())
@@ -1018,15 +1017,8 @@ struct ContentView: View {
             .padding(.horizontal)
             .padding(.vertical, 10)
         }
-        .onChange(of: vm.isPlaying) { playing in
-            if !playing { isFlashingRemaining = false; flashBright = false }
-        }
-        .onChange(of: vm.currentIndex) { _ in
-            isFlashingRemaining = false
-            flashBright = false
-        }
-        .onChange(of: isFlashingRemaining) { flashing in
-            if flashing {
+        .onChange(of: vm.isNearingEnd) { nearing in
+            if nearing {
                 withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
                     flashBright = true
                 }
