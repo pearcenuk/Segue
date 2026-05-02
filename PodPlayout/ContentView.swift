@@ -693,8 +693,12 @@ struct ContentView: View {
             }
             .contentShape(Rectangle())
             .modifier(PauseTint(isPause: item.isPause))
-            .onTapGesture { onPlay() }
+            .onTapGesture(count: 2) { onPlay() }
             .contextMenu {
+                if case .track = item {
+                    Button("Play", action: onPlay)
+                    Divider()
+                }
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
                 switch item {
@@ -845,7 +849,7 @@ struct ContentView: View {
                     index: index,
                     item: item,
                     isCurrent: vm.currentIndex == index,
-                    onPlay: { vm.currentIndex = index },
+                    onPlay: { vm.play(at: index) },
                     onInsertPauseBefore: { vm.addPause(at: index) },
                     onInsertPauseAfter: { vm.addPause(at: index + 1) },
                     onToggleCrossfade: {
