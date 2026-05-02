@@ -759,6 +759,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .automatic) { settingsButton }
                 ToolbarItem(placement: .automatic) { importPlaylistButton }
                 ToolbarItem(placement: .automatic) { exportPlaylistButton }
+                ToolbarItem(placement: .automatic) { clearPlaylistButton }
             }
             .onAppear {
                 vm.loadPersistedPlaylist()
@@ -1016,6 +1017,18 @@ struct ContentView: View {
         }
         .help("Export playlist to JSON file")
         .keyboardShortcut(.init("s"), modifiers: [.command])
+    }
+
+    private var clearPlaylistButton: some View {
+        Button(role: .destructive) {
+            vm.items.removeAll()
+            vm.currentIndex = nil
+            vm.savePlaylist()
+        } label: {
+            Label("Clear Playlist", systemImage: "trash")
+        }
+        .help("Clear all tracks from playlist")
+        .disabled(vm.items.isEmpty)
     }
 
     private func timeString(_ t: TimeInterval) -> String {
