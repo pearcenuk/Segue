@@ -965,6 +965,7 @@ struct ContentView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(flashBright ? Color.red : (vm.isPlaying ? Color.red.opacity(0.08) : Color.secondary.opacity(0.08)))
+                        .id(vm.currentIndex) // recreate on track change, killing any in-progress animation
                 )
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.4) : Color.secondary.opacity(0.2), lineWidth: 1))
 
@@ -1018,14 +1019,11 @@ struct ContentView: View {
             .padding(.vertical, 10)
         }
         .onChange(of: vm.isPlaying) { playing in
-            if !playing {
-                isFlashingRemaining = false
-                withAnimation(.none) { flashBright = false }
-            }
+            if !playing { isFlashingRemaining = false; flashBright = false }
         }
         .onChange(of: vm.currentIndex) { _ in
             isFlashingRemaining = false
-            withAnimation(.none) { flashBright = false }
+            flashBright = false
         }
         .onChange(of: isFlashingRemaining) { flashing in
             if flashing {
@@ -1033,7 +1031,7 @@ struct ContentView: View {
                     flashBright = true
                 }
             } else {
-                withAnimation(.none) { flashBright = false }
+                flashBright = false
             }
         }
     }
