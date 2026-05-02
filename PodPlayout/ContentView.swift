@@ -167,6 +167,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var defaultCrossfadeDuration: TimeInterval = 1.0
     @Published var playedTrackIDs: Set<UUID> = []
 
+    @Published var meterLevels: [Float] = [0, 0]
+    @Published var meterPeaks: [Float] = [0, 0]
+    private var peakHoldCounters: [Int] = [0, 0]
+
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
     private var timeLink: CADisplayLinkLike?
@@ -381,6 +385,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         do {
             player = try AVAudioPlayer(contentsOf: url)
             player?.delegate = self
+            player?.isMeteringEnabled = true
             player?.prepareToPlay()
             player?.volume = 0
             if let idx = currentIndex, case .track(let t) = items[idx], t.trimStart > 0 {
@@ -400,9 +405,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         beginScopedAccess(for: url)
         let p = try AVAudioPlayer(contentsOf: url)
         p.delegate = self
+        p.isMeteringEnabled = true
         p.prepareToPlay()
         p.volume = volume
         return p
+    }
+
+    private static func dbToNorm(_ db: Float, floor: Float = -60) -> Float {
+        guard db > floor else { return 0 }
+        return (db - floor) / (-floor)
     }
 
     private func crossfadeTo(url: URL, duration: TimeInterval) {
@@ -461,6 +472,27 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.currentTime = p.currentTime
             self.duration = p.duration
 
+            // Meter levels
+            p.updateMeters()
+            let chCount = p.numberOfChannels
+            if self.meterLevels.count != chCount {
+                self.meterLevels = [Float](repeating: 0, count: chCount)
+                self.meterPeaks = [Float](repeating: 0, count: chCount)
+                self.peakHoldCounters = [Int](repeating: 0, count: chCount)
+            }
+            for ch in 0..<chCount {
+                let lvl = Self.dbToNorm(p.averagePower(forChannel: ch))
+                if lvl >= self.meterPeaks[ch] {
+                    self.meterPeaks[ch] = lvl
+                    self.peakHoldCounters[ch] = 45
+                } else if self.peakHoldCounters[ch] > 0 {
+                    self.peakHoldCounters[ch] -= 1
+                } else {
+                    self.meterPeaks[ch] = max(0, self.meterPeaks[ch] - 0.018)
+                }
+                self.meterLevels[ch] = lvl
+            }
+
             // Effective end and trim start offset
             if let idx = self.currentIndex, case .track(let t) = self.items[idx] {
                 self.currentTrimStart = t.trimStart
@@ -505,6 +537,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         effectiveEnd = 0
         currentTrimStart = 0
         isNearingEnd = false
+        meterLevels = [0, 0]
+        meterPeaks = [0, 0]
+        peakHoldCounters = [0, 0]
     }
 
     func loadPersistedPlaylist() {
@@ -1209,28 +1244,35 @@ struct ContentView: View {
             // ON AIR / NEXT panels
             HStack(spacing: 12) {
                 // ON AIR
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(vm.isPlaying ? "ON AIR" : "CUE", systemImage: vm.isPlaying ? "dot.radiowaves.left.and.right" : "pause.circle")
-                        .font(.title3.bold())
-                        .foregroundStyle(vm.isPlaying ? .red : .secondary)
-                    if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
-                        Text(vm.items[idx].displayName)
-                            .font(.system(size: 28, weight: .bold))
-                            .lineLimit(3)
-                            .foregroundStyle(vm.isNearingEnd ? .white : .primary)
-                    } else {
-                        Text("—")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundStyle(.tertiary)
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(vm.isPlaying ? "ON AIR" : "CUE", systemImage: vm.isPlaying ? "dot.radiowaves.left.and.right" : "pause.circle")
+                            .font(.title3.bold())
+                            .foregroundStyle(vm.isPlaying ? .red : .secondary)
+                        if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
+                            Text(vm.items[idx].displayName)
+                                .font(.system(size: 28, weight: .bold))
+                                .lineLimit(3)
+                                .foregroundStyle(vm.isNearingEnd ? .white : .primary)
+                        } else {
+                            Text("—")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        if vm.effectiveEnd > 0 {
+                            let elapsed = max(0, vm.currentTime - vm.currentTrimStart)
+                            let total = vm.effectiveEnd - vm.currentTrimStart
+                            Text("\(timeString(elapsed)) / \(timeString(total))")
+                                .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    if vm.effectiveEnd > 0 {
-                        let elapsed = max(0, vm.currentTime - vm.currentTrimStart)
-                        let total = vm.effectiveEnd - vm.currentTrimStart
-                        Text("\(timeString(elapsed)) / \(timeString(total))")
-                            .font(.system(size: 28, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
-                    }
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    VUMeterView(levels: vm.meterLevels, peaks: vm.meterPeaks)
+                        .frame(width: 34)
+                        .padding(.top, 2)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1549,6 +1591,92 @@ struct ContentView: View {
         vm.savePlaylist()
     }
     
+}
+
+// MARK: - VU Meter
+
+struct VUMeterView: View {
+    let levels: [Float]
+    let peaks: [Float]
+
+    private let channelLabels = ["L", "R"]
+
+    var body: some View {
+        VStack(spacing: 3) {
+            HStack(alignment: .bottom, spacing: 4) {
+                ForEach(0..<max(levels.count, 1), id: \.self) { ch in
+                    let level = ch < levels.count ? CGFloat(levels[ch]) : 0
+                    let peak  = ch < peaks.count  ? CGFloat(peaks[ch])  : 0
+                    MeterBarView(level: level, peak: peak)
+                }
+            }
+            HStack(spacing: 4) {
+                ForEach(0..<max(levels.count, 1), id: \.self) { ch in
+                    Text(ch < channelLabels.count ? channelLabels[ch] : "\(ch+1)")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 10)
+        }
+    }
+}
+
+struct MeterBarView: View {
+    let level: CGFloat
+    let peak: CGFloat
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            ZStack {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.white.opacity(0.07))
+
+                // Level fill — VStack+Spacer keeps bar pinned to bottom
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Rectangle()
+                        .fill(meterGradient)
+                        .frame(height: h * max(0, min(1, level)))
+                }
+
+                // Peak hold line
+                if peak > 0.01 {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                            .frame(height: max(0, h * (1 - peak)))
+                        Rectangle()
+                            .fill(peakColor(peak))
+                            .frame(height: 2)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 2))
+        }
+    }
+
+    private var meterGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: Color(red: 0.1, green: 0.85, blue: 0.1), location: 0),
+                .init(color: Color(red: 0.1, green: 0.85, blue: 0.1), location: 0.65),
+                .init(color: .yellow,  location: 0.78),
+                .init(color: .orange,  location: 0.88),
+                .init(color: .red,     location: 1.0),
+            ],
+            startPoint: .bottom,
+            endPoint: .top
+        )
+    }
+
+    private func peakColor(_ p: CGFloat) -> Color {
+        if p > 0.88 { return .red }
+        if p > 0.7  { return .yellow }
+        return Color(red: 0.1, green: 0.85, blue: 0.1)
+    }
 }
 
 struct FilePickerBridge: View {
