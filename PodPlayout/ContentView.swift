@@ -195,6 +195,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         savePlaylist()
     }
 
+    func resetSession() {
+        stopPlayback()
+        playedTrackIDs.removeAll()
+    }
+
     func addPause(at index: Int? = nil) {
         if let index, items.indices.contains(index) {
             items.insert(.pause(PauseItem()), at: index)
@@ -742,6 +747,7 @@ struct ContentView: View {
 
     private struct PlaylistRow: View {
         let index: Int
+        let trackNumber: Int?
         let item: PlaylistItem
         let isCurrent: Bool
         let isPlayed: Bool
@@ -769,7 +775,7 @@ struct ContentView: View {
             let displayDuration = t.effectiveDuration ?? t.durationSeconds
             HStack(spacing: 10) {
                 // Track index
-                Text("\(index + 1)")
+                Text(trackNumber.map { "\($0)" } ?? "")
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 26, alignment: .trailing)
@@ -843,8 +849,8 @@ struct ContentView: View {
         @ViewBuilder
         private var pauseRow: some View {
             HStack(spacing: 10) {
-                Text("")
-                    .frame(width: 26)
+                Text("").frame(width: 26) // index column
+                Color.clear.frame(width: 16) // status icon column
                 Text("Pause")
                     .font(.body.italic())
                     .foregroundStyle(.red)
@@ -900,6 +906,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .automatic) { settingsButton }
                 ToolbarItem(placement: .automatic) { importPlaylistButton }
                 ToolbarItem(placement: .automatic) { exportPlaylistButton }
+                ToolbarItem(placement: .automatic) { resetSessionButton }
                 ToolbarItem(placement: .automatic) { clearPlaylistButton }
                 ToolbarItem(placement: .automatic) { helpButton }
             }
@@ -998,11 +1005,19 @@ struct ContentView: View {
     }
 
     private var playlistView: some View {
-        VStack(spacing: 0) {
+        let trackNums: [Int?] = {
+            var count = 0
+            return vm.items.map { item in
+                if case .track = item { count += 1; return count }
+                return nil
+            }
+        }()
+        return VStack(spacing: 0) {
         List {
             ForEach(Array(vm.items.enumerated()), id: \.offset) { index, item in
                 PlaylistRow(
                     index: index,
+                    trackNumber: trackNums[index],
                     item: item,
                     isCurrent: vm.currentIndex == index,
                     isPlayed: { if case .track(let t) = item { return vm.playedTrackIDs.contains(t.id) }; return false }(),
@@ -1146,6 +1161,11 @@ struct ContentView: View {
                             .font(.system(size: 28, weight: .bold))
                             .foregroundStyle(.tertiary)
                     }
+                    if vm.effectiveEnd > 0 {
+                        Text("\(timeString(vm.currentTime)) / \(timeString(vm.effectiveEnd))")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
+                    }
                     Spacer(minLength: 0)
                 }
                 .padding(12)
@@ -1273,6 +1293,17 @@ struct ContentView: View {
         }
         .help("Export playlist to JSON file")
         .keyboardShortcut(.init("s"), modifiers: [.command])
+    }
+
+    private var resetSessionButton: some View {
+        Button {
+            vm.resetSession()
+        } label: {
+            Label("Reset Session", systemImage: "arrow.counterclockwise")
+        }
+        .help("Stop playback and clear played markers — keeps all tracks")
+        .keyboardShortcut("r", modifiers: [.command, .shift])
+        .disabled(vm.items.isEmpty)
     }
 
     private var clearPlaylistButton: some View {
