@@ -770,8 +770,8 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 // Track index
                 Text("\(index + 1)")
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 13).monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .frame(width: 26, alignment: .trailing)
                 // Status icon (fixed width to keep title aligned)
                 ZStack {
