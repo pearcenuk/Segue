@@ -966,20 +966,19 @@ struct ContentView: View {
             // Now Playing - Super Visible
             VStack(spacing: 4) {
                 if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
-                    let remaining = max(0, vm.duration - vm.currentTime)
                     Text(vm.items[idx].displayName)
                         .font(.title2)
                         .fontWeight(.bold)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(remaining <= 30 && remaining > 0 ? .white : .primary)
+                        .foregroundStyle(isFlashingRemaining ? .white : .primary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(remaining <= 30 && remaining > 0 ? Color.red : Color.clear)
-                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: remaining <= 30 && remaining > 0)
+                                .fill(isFlashingRemaining ? Color.red : Color.clear)
+                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
                         )
                 } else {
                     Text("No Track Playing")
@@ -993,6 +992,9 @@ struct ContentView: View {
         .padding()
         .onChange(of: vm.isPlaying) { playing in
             if !playing { isFlashingRemaining = false }
+        }
+        .onChange(of: vm.currentIndex) { _ in
+            isFlashingRemaining = false
         }
     }
 
@@ -1068,7 +1070,7 @@ struct ContentView: View {
             Label("Keyboard Shortcuts", systemImage: "questionmark.circle")
         }
         .help("Show keyboard shortcuts")
-        .keyboardShortcut("/", modifiers: [.command])
+        .keyboardShortcut("?", modifiers: [])
     }
 
     private var keyboardShortcutsSheet: some View {
@@ -1106,7 +1108,7 @@ struct ContentView: View {
 
                 Group {
                     Text("Other").font(.headline)
-                    ShortcutRow(key: "⌘ + /", description: "Show keyboard shortcuts")
+                    ShortcutRow(key: "?", description: "Show keyboard shortcuts")
                 }
             }
 
