@@ -307,6 +307,12 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         currentTime = p.currentTime
     }
 
+    func seekToNearEnd(secondsFromEnd: TimeInterval = 10) {
+        guard let p = player else { return }
+        p.currentTime = max(0, p.duration - secondsFromEnd)
+        currentTime = p.currentTime
+    }
+
     private func beginScopedAccess(for url: URL) {
         endScopedAccess()
         #if os(iOS) || os(macOS)
@@ -999,6 +1005,10 @@ struct ContentView: View {
                     Button { vm.next() } label: { Image(systemName: "forward.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
+                    Button { vm.seekToNearEnd() } label: { Image(systemName: "10.arrow.trianglehead.counterclockwise").font(.title3) }
+                        .disabled(!vm.isPlaying)
+                        .help("Skip to 10 seconds from end")
+                        .keyboardShortcut("e", modifiers: [.command])
                 }
                 Spacer()
             }
@@ -1103,6 +1113,7 @@ struct ContentView: View {
                     ShortcutRow(key: "Space", description: "Play / Pause")
                     ShortcutRow(key: "⌘ + ←", description: "Previous track")
                     ShortcutRow(key: "⌘ + →", description: "Next track")
+                    ShortcutRow(key: "⌘ + E", description: "Skip to 10s from end")
                 }
 
                 Divider().padding(.vertical, 4)
