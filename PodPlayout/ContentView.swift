@@ -159,6 +159,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var effectiveEnd: TimeInterval = 0
+    @Published var currentTrimStart: TimeInterval = 0
     @Published var isNearingEnd: Bool = false
     
     @Published var defaultCrossfadeEnabled: Bool = false
@@ -448,10 +449,12 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.currentTime = p.currentTime
             self.duration = p.duration
 
-            // Effective end respects trimEnd
-            if let idx = self.currentIndex, case .track(let t) = self.items[idx], let te = t.trimEnd {
-                self.effectiveEnd = te
+            // Effective end and trim start offset
+            if let idx = self.currentIndex, case .track(let t) = self.items[idx] {
+                self.currentTrimStart = t.trimStart
+                self.effectiveEnd = t.trimEnd ?? self.duration
             } else {
+                self.currentTrimStart = 0
                 self.effectiveEnd = self.duration
             }
             let remaining = max(0, self.effectiveEnd - self.currentTime)
@@ -488,6 +491,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         effectiveEnd = 0
+        currentTrimStart = 0
         isNearingEnd = false
     }
 
@@ -1167,7 +1171,9 @@ struct ContentView: View {
                             .foregroundStyle(.tertiary)
                     }
                     if vm.effectiveEnd > 0 {
-                        Text("\(timeString(vm.currentTime)) / \(timeString(vm.effectiveEnd))")
+                        let elapsed = max(0, vm.currentTime - vm.currentTrimStart)
+                        let total = vm.effectiveEnd - vm.currentTrimStart
+                        Text("\(timeString(elapsed)) / \(timeString(total))")
                             .font(.system(size: 28, weight: .semibold).monospacedDigit())
                             .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
                     }
