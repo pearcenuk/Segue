@@ -59,6 +59,7 @@ struct Track: Identifiable, Equatable {
     var durationSeconds: TimeInterval? = nil
     var trimStart: TimeInterval = 0
     var trimEnd: TimeInterval? = nil
+    var isMissing: Bool = false
 
     var effectiveDuration: TimeInterval? {
         guard let d = durationSeconds else { return nil }
@@ -517,6 +518,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         t.durationSeconds = bundle.durationSeconds ?? t.durationSeconds
                         t.trimStart = bundle.trimStart
                         t.trimEnd = bundle.trimEnd
+                        let accessing = t.url.startAccessingSecurityScopedResource()
+                        t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
+                        if accessing { t.url.stopAccessingSecurityScopedResource() }
                         if t.durationSeconds == nil {
                             let asset = AVURLAsset(url: t.url)
                             let seconds = CMTimeGetSeconds(asset.duration)
@@ -793,6 +797,11 @@ struct ContentView: View {
                 }
                 .frame(width: 16)
                 // Title
+                if t.isMissing {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                        .help("File not found — track will fail to play")
+                }
                 Text(t.title)
                     .font(.body)
                     .lineLimit(1)
@@ -817,6 +826,10 @@ struct ContentView: View {
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(.tint)
                 }
+                Image(systemName: "line.3.horizontal")
+                    .font(.caption)
+                    .foregroundStyle(.quaternary)
+                    .padding(.leading, 4)
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
@@ -859,6 +872,10 @@ struct ContentView: View {
                     .font(.body.italic())
                     .foregroundStyle(.red)
                 Spacer()
+                Image(systemName: "line.3.horizontal")
+                    .font(.caption)
+                    .foregroundStyle(.quaternary)
+                    .padding(.leading, 4)
             }
             .padding(.vertical, 7)
             .contentShape(Rectangle())
@@ -1117,13 +1134,26 @@ struct ContentView: View {
     private var controls: some View {
         VStack(spacing: 0) {
             // Clock bar
-            HStack {
-                Text(currentDate, format: .dateTime.hour().minute().second())
-                    .monospacedDigit()
-                    .fontWeight(.semibold)
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("CLOCK")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                    Text(currentDate, format: .dateTime.hour().minute().second())
+                        .font(.callout.weight(.semibold).monospacedDigit())
+                }
                 Spacer()
+                if remainingPlaylistDuration > 0 {
+                    let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("SHOW ENDS ~")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                        Text(endDate, format: .dateTime.hour().minute())
+                            .font(.callout.weight(.semibold).monospacedDigit())
+                    }
+                }
             }
-            .font(.callout)
             .padding(.horizontal)
             .padding(.top, 8)
             .padding(.bottom, 6)
