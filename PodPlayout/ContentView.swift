@@ -267,19 +267,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func next() {
-        guard let idx = currentIndex else {
-            if !items.isEmpty {
-                fade(to: 0.0, duration: 0.2) {
-                    self.player?.stop()
-                    self.player = nil
-                    self.isPlaying = false
-                    self.stopTimeUpdates()
-                    self.currentIndex = 0
-                    self.play()
-                }
-            }
-            return
-        }
+        guard let idx = currentIndex else { return }
         let nextIdx = idx + 1
         if items.indices.contains(nextIdx) {
             if case .track(let t) = items[nextIdx] {
