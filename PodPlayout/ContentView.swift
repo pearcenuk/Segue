@@ -964,7 +964,7 @@ struct ContentView: View {
             Toggle("Auto-advance", isOn: $vm.autoAdvance)
 
             // Now Playing - Super Visible
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 if let idx = vm.currentIndex, vm.items.indices.contains(idx) {
                     Text(vm.items[idx].displayName)
                         .font(.title2)
@@ -980,6 +980,22 @@ struct ContentView: View {
                                 .fill(isFlashingRemaining ? Color.red : Color.clear)
                                 .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isFlashingRemaining)
                         )
+
+                    let nextIdx = idx + 1
+                    if vm.items.indices.contains(nextIdx) {
+                        HStack(spacing: 6) {
+                            Text("Next:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(vm.items[nextIdx].displayName)
+                                .font(.caption)
+                                .foregroundStyle(vm.items[nextIdx].isPause ? .red : .secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                    }
                 } else {
                     Text("No Track Playing")
                         .font(.title2)
