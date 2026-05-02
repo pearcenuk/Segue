@@ -253,6 +253,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func togglePlayPause() {
+        // When sitting on a pause item, Space ends the pause and plays next
+        if let idx = currentIndex, case .pause = items[idx] {
+            next()
+            return
+        }
         if isPlaying {
             pause()
         } else {
