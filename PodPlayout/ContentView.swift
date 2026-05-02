@@ -353,6 +353,32 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         currentTime = p.currentTime
     }
 
+    func seekBackward(by seconds: TimeInterval = 5) {
+        guard let p = player else { return }
+        let lower = currentTrimStart
+        p.currentTime = max(lower, p.currentTime - seconds)
+        currentTime = p.currentTime
+    }
+
+    func seekForward(by seconds: TimeInterval = 5) {
+        guard let p = player else { return }
+        let upper = effectiveEnd > 0 ? effectiveEnd : p.duration
+        p.currentTime = min(upper, p.currentTime + seconds)
+        currentTime = p.currentTime
+    }
+
+    func fadeOut(duration: TimeInterval = 3.0) {
+        fade(to: 0.0, duration: duration) {
+            self.player?.stop()
+            self.player = nil
+            self.altPlayer?.stop()
+            self.altPlayer = nil
+            self.endScopedAccess()
+            self.isPlaying = false
+            self.stopTimeUpdates()
+        }
+    }
+
     func seekToNearEnd(secondsFromEnd: TimeInterval = 10) {
         guard let p = player else { return }
         let end: TimeInterval
@@ -1420,12 +1446,20 @@ struct ContentView: View {
                     Button { vm.previous() } label: { Image(systemName: "backward.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .keyboardShortcut(.leftArrow, modifiers: [.command])
+                    Button { vm.seekBackward() } label: { Image(systemName: "gobackward.5").font(.title3) }
+                        .disabled(!vm.isPlaying)
+                        .help("Seek back 5 seconds")
+                        .keyboardShortcut(.leftArrow, modifiers: [])
                     Button { vm.togglePlayPause() } label: {
                         Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title2)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(vm.items.isEmpty)
                     .keyboardShortcut(.space, modifiers: [])
+                    Button { vm.seekForward() } label: { Image(systemName: "goforward.5").font(.title3) }
+                        .disabled(!vm.isPlaying)
+                        .help("Seek forward 5 seconds")
+                        .keyboardShortcut(.rightArrow, modifiers: [])
                     Button { vm.next() } label: { Image(systemName: "forward.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
@@ -1433,6 +1467,10 @@ struct ContentView: View {
                         .disabled(!vm.isPlaying)
                         .help("Skip to 10 seconds from end")
                         .keyboardShortcut("e", modifiers: [.command])
+                    Button { vm.fadeOut() } label: { Label("Fade Out", systemImage: "speaker.slash.fill").font(.title3) }
+                        .disabled(!vm.isPlaying)
+                        .help("Fade out and stop (3 seconds)")
+                        .keyboardShortcut(".", modifiers: [.command])
                 }
                 Spacer()
             }
@@ -1550,7 +1588,10 @@ struct ContentView: View {
                     ShortcutRow(key: "Space", description: "Play / Pause")
                     ShortcutRow(key: "⌘ + ←", description: "Previous track")
                     ShortcutRow(key: "⌘ + →", description: "Next track")
+                    ShortcutRow(key: "←", description: "Seek back 5 seconds")
+                    ShortcutRow(key: "→", description: "Seek forward 5 seconds")
                     ShortcutRow(key: "⌘ + E", description: "Skip to 10s from end")
+                    ShortcutRow(key: "⌘ + .", description: "Fade out and stop")
                 }
 
                 Divider().padding(.vertical, 4)
