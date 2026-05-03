@@ -82,12 +82,12 @@ struct Track: Identifiable, Equatable {
 extension Track {
     static func from(bookmarkData: Data) -> (Track, Bool)? {
         var isStale = false
-        // Try security-scoped first; fall back to plain resolve which can recover
-        // the stored path even when the volume (e.g. SMB) is not mounted.
-        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+        // .withoutUI prevents macOS from showing mount/credential dialogs for
+        // network volumes (e.g. SMB) that are not currently mounted.
+        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             return (Track(url: url), isStale)
         }
-        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             return (Track(url: url), isStale)
         }
         return nil
@@ -735,7 +735,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     var p = PauseItem()
                     if let bm = bundle.bedBookmark {
                         var stale = false
-                        if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                        if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) {
                             p.bedBookmark = stale ? nil : bm
                             p.bedURL = url
                         }
@@ -883,7 +883,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 var p = PauseItem()
                 if let bm = bundle.bedBookmark {
                     var stale = false
-                    if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                    if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) {
                         p.bedBookmark = stale ? nil : bm
                         p.bedURL = url
                     }
@@ -1211,6 +1211,7 @@ struct ContentView: View {
                     .padding(.leading, 4)
             }
             .padding(.vertical, 7)
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.white.opacity(0.05) : Color.clear))
             .contentShape(Rectangle())
             .contextMenu {
                 Button("Insert Pause Before", action: onInsertPauseBefore)
@@ -1353,14 +1354,33 @@ struct ContentView: View {
     }
 
     private var remainingPlaylistDuration: TimeInterval {
-        let startIdx = vm.currentIndex ?? 0
-        let trackRemaining = max(0, vm.duration - vm.currentTime)
-        var total: TimeInterval = trackRemaining
-        let afterCurrent = vm.currentIndex != nil ? startIdx + 1 : startIdx
-        for i in afterCurrent..<vm.items.count {
-            if case .track(let t) = vm.items[i], let d = t.effectiveDuration ?? t.durationSeconds { total += d }
+        if let idx = vm.currentIndex {
+            // Active track: use effectiveEnd (respects trimEnd) with stored-duration fallback.
+            // effectiveEnd is briefly 0 while the new player loads after a jump.
+            let liveRemaining = vm.effectiveEnd > 0 ? max(0, vm.effectiveEnd - vm.currentTime) : 0
+            let storedDuration: TimeInterval = {
+                if case .track(let t) = vm.items[idx] { return t.effectiveDuration ?? t.durationSeconds ?? 0 }
+                return 0
+            }()
+            let trackRemaining = liveRemaining > 0 ? liveRemaining : storedDuration
+            var total: TimeInterval = trackRemaining
+            for i in (idx + 1)..<vm.items.count {
+                if case .track(let t) = vm.items[i], let d = t.effectiveDuration ?? t.durationSeconds { total += d }
+            }
+            return total
+        } else {
+            // Stopped: find the furthest track that has been played, sum everything after it.
+            // If nothing has been played yet this gives the full playlist duration.
+            var lastPlayedIdx = -1
+            for i in 0..<vm.items.count {
+                if case .track(let t) = vm.items[i], vm.playedTrackIDs.contains(t.id) { lastPlayedIdx = i }
+            }
+            var total: TimeInterval = 0
+            for i in (lastPlayedIdx + 1)..<vm.items.count {
+                if case .track(let t) = vm.items[i], let d = t.effectiveDuration ?? t.durationSeconds { total += d }
+            }
+            return total
         }
-        return total
     }
 
     private var playlistView: some View {
@@ -1372,6 +1392,7 @@ struct ContentView: View {
             }
         }()
         return VStack(spacing: 0) {
+        ScrollViewReader { proxy in
         List {
             ForEach(Array(vm.items.enumerated()), id: \.offset) { index, item in
                 PlaylistRow(
@@ -1452,6 +1473,15 @@ struct ContentView: View {
             .onDelete { offsets in vm.remove(atOffsets: offsets) }
         }
         .listStyle(.inset)
+        .onChange(of: dropTargetIndex) { idx in
+            guard let idx = idx, !vm.items.isEmpty else { return }
+            if idx <= 1 {
+                withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(0, anchor: .top) }
+            } else if idx >= vm.items.count - 2 {
+                withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(vm.items.count - 1, anchor: .bottom) }
+            }
+        }
+        } // ScrollViewReader
         if !vm.items.isEmpty {
             HStack {
                 Image(systemName: "clock")
@@ -1472,6 +1502,7 @@ struct ContentView: View {
             .background(Color.secondary.opacity(0.06))
         }
         }
+        .overlay(Rectangle().stroke(Color(NSColor.separatorColor), lineWidth: 1))
     }
 
     private var controls: some View {
