@@ -738,8 +738,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     if let bm = bundle.bedBookmark {
                         var stale = false
                         if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
-                            p.bedBookmark = bm
+                            p.bedBookmark = stale ? nil : bm
                             p.bedURL = url
+                        }
+                    }
+                    if p.bedURL == nil, let path = bundle.bedPath {
+                        let url = URL(fileURLWithPath: path)
+                        if FileManager.default.fileExists(atPath: path) {
+                            p.bedURL = url
+                            p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                         }
                     }
                     rebuilt.append(.pause(p))
@@ -803,7 +810,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func savePlaylist() {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark))
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
             case .track(let t):
                 if let bm = t.makeBookmark() {
                     return .track(BookmarkWithSettings(
@@ -826,12 +833,12 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             UserDefaults.standard.set(data, forKey: storageKey)
         } catch { print("Failed to save playlist: \(error)") }
     }
-    
+
     // MARK: - File-based import/export
     func exportPlaylistData() -> Data? {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark))
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
             case .track(let t):
                 if let bm = t.makeBookmark() {
                     return .track(BookmarkWithSettings(
@@ -862,8 +869,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 if let bm = bundle.bedBookmark {
                     var stale = false
                     if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
-                        p.bedBookmark = bm
+                        p.bedBookmark = stale ? nil : bm
                         p.bedURL = url
+                    }
+                }
+                if p.bedURL == nil, let path = bundle.bedPath {
+                    let url = URL(fileURLWithPath: path)
+                    if FileManager.default.fileExists(atPath: path) {
+                        p.bedURL = url
+                        p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                     }
                 }
                 rebuilt.append(.pause(p))
@@ -934,6 +948,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     struct PausePersisted: Codable {
         var bedBookmark: Data?
+        var bedPath: String?
     }
 
     enum PersistedItem: Codable {
@@ -1020,6 +1035,7 @@ struct ContentView: View {
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     @State private var showingBedPicker = false
     @State private var bedAssignmentIndex: Int? = nil
+    @State private var showingClearConfirm = false
 
     private struct PlaylistRow: View {
         let index: Int
@@ -1721,14 +1737,24 @@ struct ContentView: View {
 
     private var clearPlaylistButton: some View {
         Button(role: .destructive) {
-            vm.items.removeAll()
-            vm.currentIndex = nil
-            vm.savePlaylist()
+            showingClearConfirm = true
         } label: {
             Label("Clear Playlist", systemImage: "trash")
         }
         .help("Clear all tracks from playlist")
         .disabled(vm.items.isEmpty)
+        .confirmationDialog("Clear playlist?", isPresented: $showingClearConfirm) {
+            Button("Clear", role: .destructive) {
+                vm.stopPlayback()
+                vm.stopBed()
+                vm.items.removeAll()
+                vm.currentIndex = nil
+                vm.savePlaylist()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove all tracks and pauses.")
+        }
     }
 
     private var helpButton: some View {
