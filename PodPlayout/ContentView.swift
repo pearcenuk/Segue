@@ -67,6 +67,7 @@ struct Track: Identifiable, Equatable {
     var trimEnd: TimeInterval? = nil
     var isMissing: Bool = false
     var normalizeGain: Float? = nil  // linear gain to reach -23 dBFS RMS target; nil = not yet scanned
+    var cachedBookmark: Data? = nil  // last known-good bookmark; used as fallback when volume is unreachable
 
     var effectiveDuration: TimeInterval? {
         guard let d = durationSeconds else { return nil }
@@ -757,6 +758,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         isStaleBookmark = false
                     }
                     if var t = baseTrack {
+                        t.cachedBookmark = bundle.bookmark
                         t.crossfadeEnabled = bundle.crossfadeEnabled
                         t.crossfadeDuration = bundle.crossfadeDuration
                         // Use defaults if flags are absent in older persisted data (default true)
@@ -813,7 +815,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             switch item {
             case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
             case .track(let t):
-                if let bm = t.makeBookmark() {
+                if let bm = t.makeBookmark() ?? t.cachedBookmark {
                     return .track(BookmarkWithSettings(
                         bookmark: bm,
                         filePath: t.url.path,
@@ -842,7 +844,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             switch item {
             case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
             case .track(let t):
-                if let bm = t.makeBookmark() {
+                if let bm = t.makeBookmark() ?? t.cachedBookmark {
                     return .track(BookmarkWithSettings(
                         bookmark: bm,
                         filePath: t.url.path,
@@ -895,6 +897,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     baseTrack = nil
                 }
                 if var t = baseTrack {
+                    t.cachedBookmark = bundle.bookmark
                     t.crossfadeEnabled = bundle.crossfadeEnabled
                     t.crossfadeDuration = bundle.crossfadeDuration
                     t.usesDefaultCrossfadeEnabled = bundle.usesDefaultCrossfadeEnabled
