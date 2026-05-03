@@ -1443,25 +1443,19 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 Spacer()
                 HStack(spacing: 20) {
-                    Button { vm.previous() } label: { Image(systemName: "backward.fill").font(.title3) }
+                    Button { vm.previous() } label: { Image(systemName: "backward.end.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
+                        .help("Previous track")
                         .keyboardShortcut(.leftArrow, modifiers: [.command])
-                    Button { vm.seekBackward() } label: { Image(systemName: "gobackward.5").font(.title3) }
-                        .disabled(!vm.isPlaying)
-                        .help("Seek back 5 seconds")
-                        .keyboardShortcut(.leftArrow, modifiers: [])
                     Button { vm.togglePlayPause() } label: {
                         Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title2)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(vm.items.isEmpty)
                     .keyboardShortcut(.space, modifiers: [])
-                    Button { vm.seekForward() } label: { Image(systemName: "goforward.5").font(.title3) }
-                        .disabled(!vm.isPlaying)
-                        .help("Seek forward 5 seconds")
-                        .keyboardShortcut(.rightArrow, modifiers: [])
-                    Button { vm.next() } label: { Image(systemName: "forward.fill").font(.title3) }
+                    Button { vm.next() } label: { Image(systemName: "forward.end.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
+                        .help("Next track")
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
                     Button { vm.seekToNearEnd() } label: { Image(systemName: "10.arrow.trianglehead.counterclockwise").font(.title3) }
                         .disabled(!vm.isPlaying)
@@ -1472,6 +1466,11 @@ struct ContentView: View {
                         .help("Fade out and stop (3 seconds)")
                         .keyboardShortcut(".", modifiers: [.command])
                 }
+                // Hidden seek buttons preserve ← / → keyboard shortcuts without cluttering the toolbar
+                Group {
+                    Button("") { vm.seekBackward() }.keyboardShortcut(.leftArrow, modifiers: []).disabled(!vm.isPlaying)
+                    Button("") { vm.seekForward() }.keyboardShortcut(.rightArrow, modifiers: []).disabled(!vm.isPlaying)
+                }.frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Spacer()
             }
             .padding(.horizontal)
