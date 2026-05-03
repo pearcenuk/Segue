@@ -181,6 +181,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var scanningTrackIDs: Set<UUID> = []
     @Published var defaultBedVolume: Float = 0.4
 
+    @Published var bedIsPlaying: Bool = false
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
 
@@ -602,16 +603,29 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         p.prepareToPlay()
         p.play()
         bedPlayer = p
+        bedIsPlaying = true
         fade(p, to: defaultBedVolume, duration: 1.5)
     }
 
     func stopBed(fadeDuration: TimeInterval = 1.5) {
         guard let b = bedPlayer else { return }
         bedPlayer = nil
+        bedIsPlaying = false
         fade(b, to: 0, duration: fadeDuration) {
             b.stop()
             self.bedScopedURL?.stopAccessingSecurityScopedResource()
             self.bedScopedURL = nil
+        }
+    }
+
+    func toggleBed() {
+        guard let b = bedPlayer else { return }
+        if b.isPlaying {
+            b.pause()
+            bedIsPlaying = false
+        } else {
+            b.play()
+            bedIsPlaying = true
         }
     }
 
@@ -1513,11 +1527,22 @@ struct ContentView: View {
                                 .lineLimit(3)
                                 .foregroundStyle(vm.isNearingEnd ? .white : .primary)
                             if case .pause(let p) = vm.items[idx], let bedName = p.bedFilename {
-                                Text(bedName)
-                                    .font(.system(size: 20, weight: .regular).italic())
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    Text(bedName)
+                                        .font(.system(size: 20, weight: .regular).italic())
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .foregroundStyle(.secondary)
+                                    Button {
+                                        vm.toggleBed()
+                                    } label: {
+                                        Image(systemName: vm.bedIsPlaying ? "pause.fill" : "play.fill")
+                                            .font(.system(size: 14))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .help("Pause/resume bed (B)")
+                                    .keyboardShortcut("b", modifiers: [])
+                                }
                             }
                         } else {
                             Text("—")
@@ -1730,6 +1755,7 @@ struct ContentView: View {
                     ShortcutRow(key: "→", description: "Seek forward 5 seconds")
                     ShortcutRow(key: "⌘ + E", description: "Skip to 10s from end")
                     ShortcutRow(key: "⌘ + .", description: "Fade out and stop")
+                    ShortcutRow(key: "B", description: "Pause / resume bed")
                 }
 
                 Divider().padding(.vertical, 4)
