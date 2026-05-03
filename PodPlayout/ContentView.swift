@@ -82,10 +82,15 @@ struct Track: Identifiable, Equatable {
 extension Track {
     static func from(bookmarkData: Data) -> (Track, Bool)? {
         var isStale = false
-        do {
-            let url = try URL(resolvingBookmarkData: bookmarkData, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale)
+        // Try security-scoped first; fall back to plain resolve which can recover
+        // the stored path even when the volume (e.g. SMB) is not mounted.
+        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale) {
             return (Track(url: url), isStale)
-        } catch { return nil }
+        }
+        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            return (Track(url: url), isStale)
+        }
+        return nil
     }
     func makeBookmark() -> Data? {
         try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -783,7 +788,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 }
             }
             items = rebuilt
-            if anyStale { savePlaylist() }
+            let hasMissing = rebuilt.contains { if case .track(let t) = $0 { return t.isMissing } else { return false } }
+            if anyStale && !hasMissing { savePlaylist() }
             let unscanned = rebuilt.compactMap { item -> UUID? in
                 if case .track(let t) = item, t.normalizeGain == nil { return t.id }
                 return nil
