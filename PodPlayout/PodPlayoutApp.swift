@@ -12,6 +12,7 @@ struct PodPlayoutApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .preferredColorScheme(.dark)
         }
     }
 }
