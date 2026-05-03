@@ -20,6 +20,12 @@ import UniformTypeIdentifiers
 
 struct PauseItem: Identifiable, Equatable {
     let id = UUID()
+    var bedBookmark: Data? = nil
+    var bedURL: URL? = nil
+
+    var bedFilename: String? { bedURL?.deletingPathExtension().lastPathComponent }
+
+    static func == (lhs: PauseItem, rhs: PauseItem) -> Bool { lhs.id == rhs.id }
 }
 
 enum PlaylistItem: Identifiable, Equatable {
@@ -173,6 +179,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     private var peakHoldCounters: [Int] = [0, 0]
 
     @Published var scanningTrackIDs: Set<UUID> = []
+    @Published var defaultBedVolume: Float = 0.4
+
+    private var bedPlayer: AVAudioPlayer? = nil
+    private var bedScopedURL: URL? = nil
 
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
@@ -208,6 +218,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     func resetSession() {
         stopPlayback()
+        stopBed(fadeDuration: 0.3)
         playedTrackIDs.removeAll()
     }
 
@@ -254,8 +265,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
         let item = items[idx]
         switch item {
-        case .pause:
+        case .pause(let p):
             stopPlayback(keepIndex: true)
+            startBed(for: p)
         case .track(let track):
             startPlayback(url: track.url)
         }
@@ -264,6 +276,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func togglePlayPause() {
         // When sitting on a pause item, Space ends the pause and plays next
         if let idx = currentIndex, case .pause = items[idx] {
+            stopBed()
             next()
             return
         }
@@ -552,9 +565,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func fade(to target: Float, duration: TimeInterval = 0.5, completion: (() -> Void)? = nil) {
-        guard let p = player else { completion?(); return }
-        let steps = 20
+    private func fade(_ p: AVAudioPlayer, to target: Float, duration: TimeInterval = 0.5, completion: (() -> Void)? = nil) {
+        let steps = max(1, Int(duration * 30))
         let stepDuration = duration / Double(steps)
         let start = p.volume
         let delta = target - start
@@ -568,6 +580,56 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 completion?()
             }
         }
+    }
+
+    private func fade(to target: Float, duration: TimeInterval = 0.5, completion: (() -> Void)? = nil) {
+        guard let p = player else { completion?(); return }
+        fade(p, to: target, duration: duration, completion: completion)
+    }
+
+    // MARK: - Bed player
+
+    func startBed(for pause: PauseItem) {
+        guard let url = pause.bedURL else { return }
+        stopBed(fadeDuration: 0.2)
+        bedScopedURL?.stopAccessingSecurityScopedResource()
+        if url.startAccessingSecurityScopedResource() { bedScopedURL = url }
+        guard let p = try? AVAudioPlayer(contentsOf: url) else {
+            bedScopedURL?.stopAccessingSecurityScopedResource(); bedScopedURL = nil; return
+        }
+        p.numberOfLoops = -1
+        p.volume = 0
+        p.prepareToPlay()
+        p.play()
+        bedPlayer = p
+        fade(p, to: defaultBedVolume, duration: 1.5)
+    }
+
+    func stopBed(fadeDuration: TimeInterval = 1.5) {
+        guard let b = bedPlayer else { return }
+        bedPlayer = nil
+        fade(b, to: 0, duration: fadeDuration) {
+            b.stop()
+            self.bedScopedURL?.stopAccessingSecurityScopedResource()
+            self.bedScopedURL = nil
+        }
+    }
+
+    func assignBed(url: URL, to index: Int) {
+        guard items.indices.contains(index), case .pause(var p) = items[index] else { return }
+        p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        p.bedURL = url
+        items[index] = .pause(p)
+        savePlaylist()
+    }
+
+    func removeBed(at index: Int) {
+        guard items.indices.contains(index), case .pause(var p) = items[index] else { return }
+        p.bedBookmark = nil
+        p.bedURL = nil
+        items[index] = .pause(p)
+        savePlaylist()
+        if currentIndex == index { stopBed() }
     }
 
     private func startTimeUpdates() {
@@ -655,8 +717,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             var anyStale = false
             for item in decoded {
                 switch item {
-                case .pause:
-                    rebuilt.append(.pause(PauseItem()))
+                case .pause(let bundle):
+                    var p = PauseItem()
+                    if let bm = bundle.bedBookmark {
+                        var stale = false
+                        if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                            p.bedBookmark = bm
+                            p.bedURL = url
+                        }
+                    }
+                    rebuilt.append(.pause(p))
                 case .track(let bundle):
                     if let result = Track.from(bookmarkData: bundle.bookmark) {
                         var (t, stale) = result
@@ -702,19 +772,22 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             defaultCrossfadeEnabled = decoded.crossfadeEnabled
             defaultCrossfadeDuration = decoded.crossfadeDuration
         }
+        let saved = UserDefaults.standard.float(forKey: "defaultBedVolume")
+        defaultBedVolume = saved > 0 ? saved : 0.4
     }
-    
+
     func saveDefaults() {
         let bundle = DefaultsBundle(crossfadeEnabled: defaultCrossfadeEnabled, crossfadeDuration: defaultCrossfadeDuration)
         if let data = try? JSONEncoder().encode(bundle) {
             UserDefaults.standard.set(data, forKey: defaultsKey)
         }
+        UserDefaults.standard.set(defaultBedVolume, forKey: "defaultBedVolume")
     }
 
     func savePlaylist() {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause: return .pause
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark))
             case .track(let t):
                 if let bm = t.makeBookmark() {
                     return .track(BookmarkWithSettings(
@@ -742,7 +815,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func exportPlaylistData() -> Data? {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause: return .pause
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark))
             case .track(let t):
                 if let bm = t.makeBookmark() {
                     return .track(BookmarkWithSettings(
@@ -768,8 +841,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         var rebuilt: [PlaylistItem] = []
         for item in decoded {
             switch item {
-            case .pause:
-                rebuilt.append(.pause(PauseItem()))
+            case .pause(let bundle):
+                var p = PauseItem()
+                if let bm = bundle.bedBookmark {
+                    var stale = false
+                    if let url = try? URL(resolvingBookmarkData: bm, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                        p.bedBookmark = bm
+                        p.bedURL = url
+                    }
+                }
+                rebuilt.append(.pause(p))
             case .track(let bundle):
                 if let track = Track.from(bookmarkData: bundle.bookmark) {
                     var t = track.0
@@ -835,9 +916,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         let crossfadeDuration: TimeInterval
     }
 
+    struct PausePersisted: Codable {
+        var bedBookmark: Data?
+    }
+
     enum PersistedItem: Codable {
         case track(BookmarkWithSettings)
-        case pause
+        case pause(PausePersisted)
 
         enum CodingKeys: String, CodingKey { case type, data }
         enum Kind: String, Codable { case track, pause }
@@ -845,15 +930,19 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let t = try c.decode(Kind.self, forKey: .type)
             switch t {
-            case .pause: self = .pause
+            case .pause:
+                // backward compat: old saves have no .data for pause
+                let bundle = (try? c.decode(PausePersisted.self, forKey: .data)) ?? PausePersisted()
+                self = .pause(bundle)
             case .track: self = .track(try c.decode(BookmarkWithSettings.self, forKey: .data))
             }
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             switch self {
-            case .pause:
+            case .pause(let bundle):
                 try c.encode(Kind.pause, forKey: .type)
+                try? c.encode(bundle, forKey: .data)
             case .track(let bundle):
                 try c.encode(Kind.track, forKey: .type)
                 try c.encode(bundle, forKey: .data)
@@ -872,8 +961,9 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
             let nextIdx = idx + 1
             if items.indices.contains(nextIdx) {
                 currentIndex = nextIdx
-                if case .pause = items[nextIdx] {
+                if case .pause(let p) = items[nextIdx] {
                     stopPlayback(keepIndex: true)
+                    startBed(for: p)
                 } else {
                     play()
                 }
@@ -912,6 +1002,8 @@ struct ContentView: View {
     @State private var showingKeyboardShortcuts = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var showingBedPicker = false
+    @State private var bedAssignmentIndex: Int? = nil
 
     private struct PlaylistRow: View {
         let index: Int
@@ -928,6 +1020,9 @@ struct ContentView: View {
         let onRemove: () -> Void
         let onRemovePause: () -> Void
         let onSetColor: (RGBAColor?) -> Void
+        let bedName: String?
+        let onAssignBed: () -> Void
+        let onRemoveBed: () -> Void
 
         var body: some View {
             if item.isPause {
@@ -966,6 +1061,7 @@ struct ContentView: View {
                     .font(.body)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .foregroundStyle(t.tagColor.map { Color($0) } ?? Color.primary)
                 Spacer()
                 // Duration with optional trim indicator
                 if let d = displayDuration {
@@ -1038,11 +1134,21 @@ struct ContentView: View {
         @ViewBuilder
         private var pauseRow: some View {
             HStack(spacing: 10) {
-                Text("").frame(width: 26) // index column
-                Color.clear.frame(width: 16) // status icon column
+                Text("").frame(width: 26)
+                Color.clear.frame(width: 16)
                 Text("Pause")
                     .font(.body.italic())
                     .foregroundStyle(.red)
+                if let name = bedName {
+                    Text("·")
+                        .font(.body.italic())
+                        .foregroundStyle(.red.opacity(0.5))
+                    Text(name)
+                        .font(.body.italic())
+                        .foregroundStyle(.red.opacity(0.7))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 Spacer()
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
@@ -1054,6 +1160,11 @@ struct ContentView: View {
             .contextMenu {
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
+                if bedName != nil {
+                    Button("Remove Bed", action: onRemoveBed)
+                } else {
+                    Button("Assign Bed…", action: onAssignBed)
+                }
                 Button(role: .destructive, action: onRemovePause) { Label("Remove Pause", systemImage: "trash") }
             }
         }
@@ -1147,6 +1258,13 @@ struct ContentView: View {
                         Text(String(format: "%.1fs", vm.defaultCrossfadeDuration)).frame(width: 60, alignment: .trailing)
                     }
                     .accessibilityElement(children: .combine)
+                    Divider()
+                    HStack {
+                        Text("Bed volume")
+                        Slider(value: $vm.defaultBedVolume, in: 0...1, step: 0.05)
+                        Text(String(format: "%.0f%%", vm.defaultBedVolume * 100)).frame(width: 60, alignment: .trailing)
+                    }
+                    .accessibilityElement(children: .combine)
                     HStack {
                         Spacer()
                         Button("Close") {
@@ -1182,6 +1300,14 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingKeyboardShortcuts) {
                 keyboardShortcutsSheet
+            }
+            .sheet(isPresented: $showingBedPicker) {
+                FilePickerBridge(allowedExtensions: ["mp3", "wav", "aiff", "m4a"]) { urls in
+                    if let url = urls.first, let idx = bedAssignmentIndex {
+                        vm.assignBed(url: url, to: idx)
+                    }
+                    showingBedPicker = false
+                }
             }
         }
     }
@@ -1262,7 +1388,13 @@ struct ContentView: View {
                             vm.items[index] = .track(t)
                             vm.savePlaylist()
                         }
-                    }
+                    },
+                    bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
+                    onAssignBed: {
+                        bedAssignmentIndex = index
+                        showingBedPicker = true
+                    },
+                    onRemoveBed: { vm.removeBed(at: index) }
                 )
                 .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
                 .onDrop(
