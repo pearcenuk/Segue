@@ -329,17 +329,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         markCurrentAsPlayed()
         let nextIdx = idx + 1
         if items.indices.contains(nextIdx) {
-            if case .track(let t) = items[nextIdx] {
-                currentIndex = nextIdx
-                if t.crossfadeEnabled {
-                    crossfadeTo(url: t.url, duration: max(0.1, t.crossfadeDuration))
-                } else {
-                    play()
-                }
-            } else {
-                currentIndex = nextIdx
-                play()
-            }
+            currentIndex = nextIdx
+            play()
         } else {
             stopPlayback()
         }
@@ -698,13 +689,14 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             if !self.isCrossfading, let idx = self.currentIndex {
                 let nextIdx = idx + 1
                 if remaining <= 0.05 { return } // let delegate handle natural end
-                if self.items.indices.contains(nextIdx), case .track(let incoming) = self.items[nextIdx], incoming.crossfadeEnabled {
-                    if remaining <= incoming.crossfadeDuration {
+                if case .track(let current) = self.items[idx], current.crossfadeEnabled,
+                   self.items.indices.contains(nextIdx), case .track(let incoming) = self.items[nextIdx] {
+                    if remaining <= current.crossfadeDuration {
                         self.isCrossfading = true
                         self.markCurrentAsPlayed()
                         self.currentIndex = nextIdx
-                        self.crossfadeTo(url: incoming.url, duration: max(0.1, incoming.crossfadeDuration), targetVolume: self.normVolume(for: incoming))
-                        DispatchQueue.main.asyncAfter(deadline: .now() + incoming.crossfadeDuration + 0.1) {
+                        self.crossfadeTo(url: incoming.url, duration: max(0.1, current.crossfadeDuration), targetVolume: self.normVolume(for: incoming))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + current.crossfadeDuration + 0.1) {
                             self.isCrossfading = false
                         }
                     }
@@ -1113,6 +1105,7 @@ struct ContentView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(.tint)
+                        .help("Fades out into the next track (\(String(format: "%.1f", t.crossfadeDuration))s)")
                 }
                 // Normalization badge
                 if let gain = t.normalizeGain {
@@ -1146,8 +1139,8 @@ struct ContentView: View {
                 Divider()
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
-                Button(t.crossfadeEnabled ? "Disable Crossfade" : "Enable Crossfade", action: onToggleCrossfade)
-                Button("Set Crossfade Duration…", action: onEditCrossfade)
+                Button(t.crossfadeEnabled ? "Disable Fade-out to Next" : "Fade Out into Next Track", action: onToggleCrossfade)
+                Button("Set Fade-out Duration…", action: onEditCrossfade)
                 Button("Set Trim Points…", action: onEditTrim)
                 Menu("Tag Color") {
                     Button("Red") { onSetColor(RGBAColor(Color.red)) }
@@ -1252,7 +1245,7 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingCrossfadeEditor) {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Crossfade Duration")
+                    Text("Fade-out Duration")
                         .font(.headline)
                     HStack {
                         Slider(value: $pendingCrossfadeDuration, in: 0...10, step: 0.1)
@@ -1283,9 +1276,9 @@ struct ContentView: View {
             .sheet(isPresented: $showingSettings) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Playback Defaults").font(.title2).bold()
-                    Toggle("Crossfade new tracks by default", isOn: $vm.defaultCrossfadeEnabled)
+                    Toggle("Fade out into next track by default", isOn: $vm.defaultCrossfadeEnabled)
                     HStack {
-                        Text("Default crossfade duration")
+                        Text("Default fade-out duration")
                         Slider(value: $vm.defaultCrossfadeDuration, in: 0...10, step: 0.1)
                         Text(String(format: "%.1fs", vm.defaultCrossfadeDuration)).frame(width: 60, alignment: .trailing)
                     }
