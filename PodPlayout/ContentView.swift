@@ -1012,7 +1012,6 @@ struct ContentView: View {
     @State private var editingTrimIndex: Int? = nil
     @State private var pendingTrimStart: Double = 0
     @State private var pendingTrimEnd: Double = 0
-    @State private var pendingTrimEndEnabled: Bool = false
     @State private var trimEditorDuration: Double = 60
 
     @State private var dropTargetIndex: Int? = nil
@@ -1389,13 +1388,7 @@ struct ContentView: View {
                             pendingTrimStart = t.trimStart
                             let dur = t.durationSeconds ?? 60
                             trimEditorDuration = dur
-                            if let te = t.trimEnd {
-                                pendingTrimEnd = te
-                                pendingTrimEndEnabled = true
-                            } else {
-                                pendingTrimEnd = dur
-                                pendingTrimEndEnabled = false
-                            }
+                            pendingTrimEnd = t.trimEnd ?? dur
                             showingTrimEditor = true
                         }
                     },
@@ -1833,44 +1826,37 @@ struct ContentView: View {
                 }
                 Slider(value: $pendingTrimStart, in: 0...max(trimEditorDuration - 1, 1), step: 0.5)
                     .onChange(of: pendingTrimStart) { v in
-                        if pendingTrimEndEnabled && pendingTrimEnd <= v { pendingTrimEnd = min(v + 1, trimEditorDuration) }
+                        if pendingTrimEnd <= v { pendingTrimEnd = min(v + 1, trimEditorDuration) }
                     }
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Toggle("Out point (early end)", isOn: $pendingTrimEndEnabled)
+                    Text("Out point (early end)")
                     Spacer()
-                    if pendingTrimEndEnabled {
-                        Text(timeString(pendingTrimEnd))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(timeString(pendingTrimEnd))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
-                if pendingTrimEndEnabled {
-                    Slider(value: $pendingTrimEnd, in: max(pendingTrimStart + 1, 1)...max(trimEditorDuration, pendingTrimStart + 2), step: 0.5)
-                }
+                Slider(value: $pendingTrimEnd, in: max(pendingTrimStart + 1, 1)...max(trimEditorDuration, pendingTrimStart + 2), step: 0.5)
             }
 
-            if pendingTrimStart > 0 || pendingTrimEndEnabled {
-                let effective = (pendingTrimEndEnabled ? pendingTrimEnd : trimEditorDuration) - pendingTrimStart
-                Text("Effective duration: \(timeString(max(0, effective)))")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+            let effective = pendingTrimEnd - pendingTrimStart
+            Text("Effective duration: \(timeString(max(0, effective)))")
+                .font(.callout)
+                .foregroundStyle(.secondary)
 
             HStack {
                 Button("Clear Trim") {
                     pendingTrimStart = 0
                     pendingTrimEnd = trimEditorDuration
-                    pendingTrimEndEnabled = false
                 }
                 Spacer()
                 Button("Cancel") { showingTrimEditor = false }
                 Button("Save") {
                     if let i = editingTrimIndex, vm.items.indices.contains(i), case .track(var t) = vm.items[i] {
                         t.trimStart = pendingTrimStart
-                        t.trimEnd = pendingTrimEndEnabled ? pendingTrimEnd : nil
+                        t.trimEnd = pendingTrimEnd < trimEditorDuration ? pendingTrimEnd : nil
                         vm.items[i] = .track(t)
                         vm.savePlaylist()
                     }
