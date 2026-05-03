@@ -498,7 +498,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 track.normalizeGain = gain
                 self.items[idx] = .track(track)
                 self.scanningTrackIDs.remove(trackID)
-                self.savePlaylist()
+                if gain != nil { self.savePlaylist() }
             }
         }
     }
@@ -791,7 +791,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             let hasMissing = rebuilt.contains { if case .track(let t) = $0 { return t.isMissing } else { return false } }
             if anyStale && !hasMissing { savePlaylist() }
             let unscanned = rebuilt.compactMap { item -> UUID? in
-                if case .track(let t) = item, t.normalizeGain == nil { return t.id }
+                if case .track(let t) = item, t.normalizeGain == nil, !t.isMissing { return t.id }
                 return nil
             }
             if !unscanned.isEmpty { scanTracks(unscanned) }
@@ -2144,6 +2144,7 @@ struct MacPicker: NSViewControllerRepresentable {
     let onPick: ([URL]) -> Void
     func makeNSViewController(context: Context) -> NSViewController {
         let vc = NSViewController()
+        vc.view = NSView(frame: .zero)
         DispatchQueue.main.async {
             let panel = NSOpenPanel()
             panel.canChooseFiles = true
@@ -2165,6 +2166,7 @@ struct MacImport: NSViewControllerRepresentable {
     let onComplete: (Data?) -> Void
     func makeNSViewController(context: Context) -> NSViewController {
         let vc = NSViewController()
+        vc.view = NSView(frame: .zero)
         DispatchQueue.main.async {
             let panel = NSOpenPanel()
             panel.canChooseFiles = true
@@ -2190,6 +2192,7 @@ struct MacExport: NSViewControllerRepresentable {
     let onComplete: () -> Void
     func makeNSViewController(context: Context) -> NSViewController {
         let vc = NSViewController()
+        vc.view = NSView(frame: .zero)
         DispatchQueue.main.async {
             let panel = NSSavePanel()
             panel.allowedFileTypes = ["json"]
