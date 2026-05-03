@@ -621,11 +621,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func toggleBed() {
         guard let b = bedPlayer else { return }
         if b.isPlaying {
-            b.pause()
             bedIsPlaying = false
+            fade(b, to: 0, duration: 2.0) { b.pause() }
         } else {
+            b.volume = 0
             b.play()
             bedIsPlaying = true
+            fade(b, to: defaultBedVolume, duration: 2.0)
         }
     }
 
