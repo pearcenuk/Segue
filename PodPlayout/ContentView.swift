@@ -1693,6 +1693,7 @@ struct ContentView: View {
                     Button("") { vm.seekBackward() }.keyboardShortcut(.leftArrow, modifiers: []).disabled(!vm.isPlaying)
                     Button("") { vm.seekForward() }.keyboardShortcut(.rightArrow, modifiers: []).disabled(!vm.isPlaying)
                     Button("") { vm.seekToNearEnd() }.keyboardShortcut("e", modifiers: [.command]).disabled(!vm.isPlaying)
+                    Button("") { showingKeyboardShortcuts = true }.keyboardShortcut("?", modifiers: [])
                 }.frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Spacer()
             }
