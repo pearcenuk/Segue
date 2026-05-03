@@ -789,7 +789,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
             items = rebuilt
             let hasMissing = rebuilt.contains { if case .track(let t) = $0 { return t.isMissing } else { return false } }
-            if anyStale && !hasMissing { savePlaylist() }
+            // Always save when no tracks are missing: migrates old playlists to include filePath
+            // so path-based fallback works next time a network volume is offline.
+            if !hasMissing { savePlaylist() }
             let unscanned = rebuilt.compactMap { item -> UUID? in
                 if case .track(let t) = item, t.normalizeGain == nil, !t.isMissing { return t.id }
                 return nil
@@ -1033,7 +1035,6 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
 
 struct ContentView: View {
     @StateObject private var vm = PlayoutViewModel()
-    @State private var showingPickerBridge = false
     @State private var draggingItemID: UUID? = nil
 
     @State private var showingCrossfadeEditor = false
@@ -1049,15 +1050,11 @@ struct ContentView: View {
     @State private var dropTargetIndex: Int? = nil
     
     @State private var showingSettings = false
-    @State private var showingImport = false
-    @State private var showingExport = false
     @State private var lastExportDirectory: URL? = nil
     @State private var flashBright = false
     @State private var showingKeyboardShortcuts = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    @State private var showingBedPicker = false
-    @State private var bedAssignmentIndex: Int? = nil
     @State private var showingClearConfirm = false
 
     private struct PlaylistRow: View {
@@ -1347,23 +1344,8 @@ struct ContentView: View {
                 .padding()
                 .frame(minWidth: 360)
             }
-            .sheet(isPresented: $showingExport) {
-                FileExportBridge(dataProvider: { vm.exportPlaylistData() }, initialDirectory: lastExportDirectory, onDirectoryChosen: { dir in
-                    lastExportDirectory = dir
-                }) {
-                    showingExport = false
-                }
-            }
             .sheet(isPresented: $showingKeyboardShortcuts) {
                 keyboardShortcutsSheet
-            }
-            .sheet(isPresented: $showingBedPicker) {
-                FilePickerBridge(allowedExtensions: ["mp3", "wav", "aiff", "m4a"]) { urls in
-                    if let url = urls.first, let idx = bedAssignmentIndex {
-                        vm.assignBed(url: url, to: idx)
-                    }
-                    showingBedPicker = false
-                }
             }
         }
     }
@@ -1440,10 +1422,7 @@ struct ContentView: View {
                         }
                     },
                     bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
-                    onAssignBed: {
-                        bedAssignmentIndex = index
-                        showingBedPicker = true
-                    },
+                    onAssignBed: { openBedPicker(for: index) },
                     onRemoveBed: { vm.removeBed(at: index) }
                 )
                 .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
@@ -1690,19 +1669,11 @@ struct ContentView: View {
     }
 
     private var importButton: some View {
-        Button {
-            showingPickerBridge = true
-        } label: {
+        Button { openTrackPicker() } label: {
             Label("Add Audio", systemImage: "plus")
         }
         .keyboardShortcut(.init("o"), modifiers: [.command])
         .help("Import MP3 or WAV files")
-        .sheet(isPresented: $showingPickerBridge) {
-            FilePickerBridge(allowedExtensions: ["mp3","wav"]) { urls in
-                vm.addFiles(urls: urls)
-                vm.savePlaylist()
-            }
-        }
     }
     
     private var settingsButton: some View {
@@ -1715,27 +1686,15 @@ struct ContentView: View {
     }
     
     private var importPlaylistButton: some View {
-        Button {
-            showingImport = true
-        } label: {
+        Button { openImportPanel() } label: {
             Label("Import", systemImage: "square.and.arrow.down")
         }
         .help("Import playlist from JSON file")
         .keyboardShortcut(.init("l"), modifiers: [.command])
-        .sheet(isPresented: $showingImport) {
-            FileImportBridge { data in
-                if let data = data {
-                    try? vm.importPlaylistData(data)
-                }
-                showingImport = false
-            }
-        }
     }
 
     private var exportPlaylistButton: some View {
-        Button {
-            showingExport = true
-        } label: {
+        Button { openExportPanel() } label: {
             Label("Export", systemImage: "square.and.arrow.up")
         }
         .help("Export playlist to JSON file")
@@ -1934,7 +1893,65 @@ struct ContentView: View {
         vm.items.insert(item, at: safeTarget)
         vm.savePlaylist()
     }
-    
+
+    private func openTrackPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedFileTypes = ["mp3", "wav"]
+        guard panel.runModal() == .OK else { return }
+        vm.addFiles(urls: panel.urls)
+        vm.savePlaylist()
+    }
+
+    private func openBedPicker(for index: Int) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedFileTypes = ["mp3", "wav", "aiff", "m4a"]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        vm.assignBed(url: url, to: index)
+    }
+
+    private func openImportPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedFileTypes = ["json"]
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url) else { return }
+        try? vm.importPlaylistData(data)
+    }
+
+    private func openExportPanel() {
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["json"]
+        panel.nameFieldStringValue = "playlist.json"
+        if let dir = lastExportDirectory { panel.directoryURL = dir }
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = vm.exportPlaylistData() else { return }
+        do {
+            let dir = url.deletingLastPathComponent()
+            let tmp = dir.appendingPathComponent(".tmp-\(UUID().uuidString).json")
+            try data.write(to: tmp, options: .atomic)
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            try FileManager.default.moveItem(at: tmp, to: url)
+            lastExportDirectory = dir
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Export failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
 }
 
 // MARK: - VU Meter
