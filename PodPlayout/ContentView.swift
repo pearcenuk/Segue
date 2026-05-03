@@ -1683,19 +1683,16 @@ struct ContentView: View {
                         .disabled(vm.items.isEmpty)
                         .help("Next track")
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
-                    Button { vm.seekToNearEnd() } label: { Image(systemName: "10.arrow.trianglehead.counterclockwise").font(.title3) }
-                        .disabled(!vm.isPlaying)
-                        .help("Skip to 10 seconds from end")
-                        .keyboardShortcut("e", modifiers: [.command])
                     Button { vm.fadeOut() } label: { Label("Fade Out", systemImage: "speaker.slash.fill").font(.title3) }
                         .disabled(!vm.isPlaying)
                         .help("Fade out and stop (3 seconds)")
                         .keyboardShortcut(".", modifiers: [.command])
                 }
-                // Hidden seek buttons preserve ← / → keyboard shortcuts without cluttering the toolbar
+                // Hidden buttons preserve keyboard shortcuts without cluttering the UI
                 Group {
                     Button("") { vm.seekBackward() }.keyboardShortcut(.leftArrow, modifiers: []).disabled(!vm.isPlaying)
                     Button("") { vm.seekForward() }.keyboardShortcut(.rightArrow, modifiers: []).disabled(!vm.isPlaying)
+                    Button("") { vm.seekToNearEnd() }.keyboardShortcut("e", modifiers: [.command]).disabled(!vm.isPlaying)
                 }.frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Spacer()
             }
@@ -1805,7 +1802,6 @@ struct ContentView: View {
                     ShortcutRow(key: "⌘ + →", description: "Next track")
                     ShortcutRow(key: "←", description: "Seek back 5 seconds")
                     ShortcutRow(key: "→", description: "Seek forward 5 seconds")
-                    ShortcutRow(key: "⌘ + E", description: "Skip to 10s from end")
                     ShortcutRow(key: "⌘ + .", description: "Fade out and stop")
                     ShortcutRow(key: "B", description: "Pause / resume bed")
                 }
