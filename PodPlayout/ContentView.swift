@@ -743,8 +743,20 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     }
                     rebuilt.append(.pause(p))
                 case .track(let bundle):
-                    if let result = Track.from(bookmarkData: bundle.bookmark) {
-                        var (t, stale) = result
+                    let resolved = Track.from(bookmarkData: bundle.bookmark)
+                    let baseTrack: Track?
+                    let isStaleBookmark: Bool
+                    if let (t, stale) = resolved {
+                        baseTrack = t
+                        isStaleBookmark = stale
+                    } else if let path = bundle.filePath {
+                        baseTrack = Track(url: URL(fileURLWithPath: path))
+                        isStaleBookmark = false
+                    } else {
+                        baseTrack = nil
+                        isStaleBookmark = false
+                    }
+                    if var t = baseTrack {
                         t.crossfadeEnabled = bundle.crossfadeEnabled
                         t.crossfadeDuration = bundle.crossfadeDuration
                         // Use defaults if flags are absent in older persisted data (default true)
@@ -758,16 +770,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         let accessing = t.url.startAccessingSecurityScopedResource()
                         t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                         if accessing { t.url.stopAccessingSecurityScopedResource() }
-                        if t.durationSeconds == nil {
+                        if !t.isMissing && t.durationSeconds == nil {
                             let asset = AVURLAsset(url: t.url)
                             let seconds = CMTimeGetSeconds(asset.duration)
                             if seconds.isFinite && seconds > 0 { t.durationSeconds = seconds }
                         }
                         rebuilt.append(.track(t))
-                        if stale {
-                            anyStale = true
-                            // Regenerate bookmark by saving later
-                        }
+                        if isStaleBookmark { anyStale = true }
                     }
                 }
             }
@@ -807,6 +816,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 if let bm = t.makeBookmark() {
                     return .track(BookmarkWithSettings(
                         bookmark: bm,
+                        filePath: t.url.path,
                         crossfadeEnabled: t.crossfadeEnabled,
                         crossfadeDuration: t.crossfadeDuration,
                         usesDefaultCrossfadeEnabled: t.usesDefaultCrossfadeEnabled,
@@ -835,6 +845,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 if let bm = t.makeBookmark() {
                     return .track(BookmarkWithSettings(
                         bookmark: bm,
+                        filePath: t.url.path,
                         crossfadeEnabled: t.crossfadeEnabled,
                         crossfadeDuration: t.crossfadeDuration,
                         usesDefaultCrossfadeEnabled: t.usesDefaultCrossfadeEnabled,
@@ -874,8 +885,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 }
                 rebuilt.append(.pause(p))
             case .track(let bundle):
-                if let track = Track.from(bookmarkData: bundle.bookmark) {
-                    var t = track.0
+                let resolved = Track.from(bookmarkData: bundle.bookmark)
+                let baseTrack: Track?
+                if let (t, _) = resolved {
+                    baseTrack = t
+                } else if let path = bundle.filePath {
+                    baseTrack = Track(url: URL(fileURLWithPath: path))
+                } else {
+                    baseTrack = nil
+                }
+                if var t = baseTrack {
                     t.crossfadeEnabled = bundle.crossfadeEnabled
                     t.crossfadeDuration = bundle.crossfadeDuration
                     t.usesDefaultCrossfadeEnabled = bundle.usesDefaultCrossfadeEnabled
@@ -885,6 +904,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     t.trimStart = bundle.trimStart
                     t.trimEnd = bundle.trimEnd
                     t.normalizeGain = bundle.normalizeGain
+                    t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                     rebuilt.append(.track(t))
                 }
             }
@@ -895,6 +915,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     struct BookmarkWithSettings: Codable {
         let bookmark: Data
+        let filePath: String?
         let crossfadeEnabled: Bool
         let crossfadeDuration: TimeInterval
         let usesDefaultCrossfadeEnabled: Bool
@@ -905,8 +926,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         let trimEnd: TimeInterval?
         let normalizeGain: Float?
 
-        init(bookmark: Data, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil, normalizeGain: Float? = nil) {
+        init(bookmark: Data, filePath: String? = nil, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil, normalizeGain: Float? = nil) {
             self.bookmark = bookmark
+            self.filePath = filePath
             self.crossfadeEnabled = crossfadeEnabled
             self.crossfadeDuration = crossfadeDuration
             self.usesDefaultCrossfadeEnabled = usesDefaultCrossfadeEnabled
@@ -921,6 +943,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             bookmark = try c.decode(Data.self, forKey: .bookmark)
+            filePath = try c.decodeIfPresent(String.self, forKey: .filePath)
             crossfadeEnabled = try c.decode(Bool.self, forKey: .crossfadeEnabled)
             crossfadeDuration = try c.decode(TimeInterval.self, forKey: .crossfadeDuration)
             usesDefaultCrossfadeEnabled = try c.decode(Bool.self, forKey: .usesDefaultCrossfadeEnabled)
