@@ -1587,7 +1587,7 @@ struct ContentView: View {
                             Text(vm.items[idx].displayName)
                                 .font(.system(size: 28, weight: .bold))
                                 .lineLimit(3)
-                                .foregroundStyle(flashBright ? Color.white : (vm.isNearingEnd ? Color.red : Color.primary))
+                                .foregroundStyle(vm.isNearingEnd ? Color.white : Color.primary)
                             if case .pause(let p) = vm.items[idx], let bedName = p.bedFilename {
                                 HStack(spacing: 8) {
                                     Text(bedName)
@@ -1616,7 +1616,7 @@ struct ContentView: View {
                             let total = vm.effectiveEnd - vm.currentTrimStart
                             Text("\(timeString(elapsed)) / \(timeString(total))")
                                 .font(.system(size: 28, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(flashBright ? Color.white.opacity(0.75) : Color.secondary)
+                                .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
                         }
                         Spacer(minLength: 0)
                     }
