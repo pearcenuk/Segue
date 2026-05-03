@@ -1094,7 +1094,7 @@ struct ContentView: View {
                 // Track index
                 Text(trackNumber.map { "\($0)" } ?? "")
                     .font(.system(size: 13).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.primary.opacity(0.55))
                     .frame(width: 26, alignment: .trailing)
                 // Status icon (fixed width to keep title aligned)
                 ZStack {
@@ -1125,7 +1125,7 @@ struct ContentView: View {
                             .font(.callout.monospacedDigit())
                             .frame(minWidth: 50, alignment: .trailing)
                     }
-                    .foregroundStyle(isTrimmed ? Color.orange : Color.secondary)
+                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
                 }
                 // CF badge
                 if t.crossfadeEnabled {
@@ -1133,7 +1133,7 @@ struct ContentView: View {
                         .font(.caption2.bold())
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .background(Capsule().fill(Color.accentColor.opacity(0.25)))
                         .foregroundStyle(.tint)
                         .help("Fades out into the next track (\(String(format: "%.1f", t.crossfadeDuration))s)")
                 }
@@ -1145,18 +1145,18 @@ struct ContentView: View {
                         .font(.caption2.bold())
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green.opacity(gain < 1.0 ? 0.15 : 0.08)))
-                        .foregroundStyle(Color.green.opacity(0.8))
+                        .background(Capsule().fill(Color.green.opacity(gain < 1.0 ? 0.22 : 0.14)))
+                        .foregroundStyle(Color.green)
                         .help("Normalization: \(label) dB applied to reach −23 dBFS")
                 }
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
-                    .foregroundStyle(.quaternary)
+                    .foregroundStyle(.secondary)
                     .padding(.leading, 4)
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.04) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
             .overlay(alignment: .leading) {
                 if let rgba = t.tagColor {
                     Rectangle().fill(Color(rgba)).frame(width: 3)
@@ -1197,21 +1197,21 @@ struct ContentView: View {
                 if let name = bedName {
                     Text("·")
                         .font(.body.italic())
-                        .foregroundStyle(.red.opacity(0.5))
+                        .foregroundStyle(.red.opacity(0.65))
                     Text(name)
                         .font(.body.italic())
-                        .foregroundStyle(.red.opacity(0.7))
+                        .foregroundStyle(.red.opacity(0.85))
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 Spacer()
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
-                    .foregroundStyle(.quaternary)
+                    .foregroundStyle(.secondary)
                     .padding(.leading, 4)
             }
             .padding(.vertical, 7)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.04) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
             .contentShape(Rectangle())
             .contextMenu {
                 Button("Insert Pause Before", action: onInsertPauseBefore)
@@ -1513,7 +1513,7 @@ struct ContentView: View {
             .font(.body)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.secondary.opacity(0.06))
+            .background(Color.secondary.opacity(0.1))
         }
         }
         .overlay(Rectangle().stroke(Color(NSColor.separatorColor), lineWidth: 1))
@@ -1550,7 +1550,7 @@ struct ContentView: View {
             .padding(.top, 8)
             .padding(.bottom, 6)
 
-            Divider().opacity(0.4)
+            Divider().opacity(0.7)
 
             // Progress bar + time display
             VStack(spacing: 4) {
@@ -1573,7 +1573,7 @@ struct ContentView: View {
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            Divider().opacity(0.4)
+            Divider().opacity(0.7)
 
             // ON AIR / NEXT panels
             HStack(spacing: 12) {
@@ -1630,10 +1630,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(flashBright ? Color.red : (vm.isPlaying ? Color.red.opacity(0.08) : Color.secondary.opacity(0.08)))
+                        .fill(flashBright ? Color.red : (vm.isPlaying ? Color.red.opacity(0.13) : Color.secondary.opacity(0.13)))
                         .id(vm.currentIndex) // recreate on track change, killing any in-progress animation
                 )
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.4) : Color.secondary.opacity(0.2), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.5) : Color.secondary.opacity(0.35), lineWidth: 1))
 
                 // NEXT
                 VStack(alignment: .leading, spacing: 8) {
@@ -1655,15 +1655,15 @@ struct ContentView: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.13)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.35), lineWidth: 1))
             }
             .frame(minHeight: 120)
             .padding(.horizontal)
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            Divider().opacity(0.4)
+            Divider().opacity(0.7)
 
             // Transport controls
             HStack(spacing: 0) {
