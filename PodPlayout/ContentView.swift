@@ -1260,7 +1260,7 @@ struct ContentView: View {
                 Divider()
                 controls
             }
-            .navigationTitle("Pod Playout")
+            .navigationTitle("Segue")
             .toolbar {
                 // Primary: add audio files
                 ToolbarItem(placement: .primaryAction) { importButton }

@@ -8,7 +8,7 @@
 import SwiftUI
 
 @main
-struct PodPlayoutApp: App {
+struct SegueApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
