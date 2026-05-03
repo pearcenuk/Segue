@@ -24,15 +24,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		E81FC4D62EADFEB100FB134D /* PodPlayout.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PodPlayout.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		E81FC4E32EADFEB400FB134D /* PodPlayoutTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PodPlayoutTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E81FC4ED2EADFEB400FB134D /* PodPlayoutUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PodPlayoutUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E81FC4D62EADFEB100FB134D /* Segue.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Segue.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E81FC4E32EADFEB400FB134D /* SegueTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SegueTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E81FC4ED2EADFEB400FB134D /* SegueUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SegueUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		E81FC4D82EADFEB100FB134D /* PodPlayout */ = {
+		E81FC4D82EADFEB100FB134D /* Segue */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PodPlayout;
+			path = Segue;
 			sourceTree = "<group>";
 		};
 		E81FC4E62EADFEB400FB134D /* PodPlayoutTests */ = {
@@ -75,7 +75,7 @@
 		E81FC4CD2EADFEB100FB134D = {
 			isa = PBXGroup;
 			children = (
-				E81FC4D82EADFEB100FB134D /* PodPlayout */,
+				E81FC4D82EADFEB100FB134D /* Segue */,
 				E81FC4E62EADFEB400FB134D /* PodPlayoutTests */,
 				E81FC4F02EADFEB400FB134D /* PodPlayoutUITests */,
 				E81FC4D72EADFEB100FB134D /* Products */,
@@ -85,9 +85,9 @@
 		E81FC4D72EADFEB100FB134D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				E81FC4D62EADFEB100FB134D /* PodPlayout.app */,
-				E81FC4E32EADFEB400FB134D /* PodPlayoutTests.xctest */,
-				E81FC4ED2EADFEB400FB134D /* PodPlayoutUITests.xctest */,
+				E81FC4D62EADFEB100FB134D /* Segue.app */,
+				E81FC4E32EADFEB400FB134D /* SegueTests.xctest */,
+				E81FC4ED2EADFEB400FB134D /* SegueUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,9 +95,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E81FC4D52EADFEB100FB134D /* PodPlayout */ = {
+		E81FC4D52EADFEB100FB134D /* Segue */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E81FC4F72EADFEB400FB134D /* Build configuration list for PBXNativeTarget "PodPlayout" */;
+			buildConfigurationList = E81FC4F72EADFEB400FB134D /* Build configuration list for PBXNativeTarget "Segue" */;
 			buildPhases = (
 				E81FC4D22EADFEB100FB134D /* Sources */,
 				E81FC4D32EADFEB100FB134D /* Frameworks */,
@@ -108,18 +108,18 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				E81FC4D82EADFEB100FB134D /* PodPlayout */,
+				E81FC4D82EADFEB100FB134D /* Segue */,
 			);
-			name = PodPlayout;
+			name = Segue;
 			packageProductDependencies = (
 			);
 			productName = PodPlayout;
-			productReference = E81FC4D62EADFEB100FB134D /* PodPlayout.app */;
+			productReference = E81FC4D62EADFEB100FB134D /* Segue.app */;
 			productType = "com.apple.product-type.application";
 		};
-		E81FC4E22EADFEB400FB134D /* PodPlayoutTests */ = {
+		E81FC4E22EADFEB400FB134D /* SegueTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E81FC4FA2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "PodPlayoutTests" */;
+			buildConfigurationList = E81FC4FA2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "SegueTests" */;
 			buildPhases = (
 				E81FC4DF2EADFEB400FB134D /* Sources */,
 				E81FC4E02EADFEB400FB134D /* Frameworks */,
@@ -133,16 +133,16 @@
 			fileSystemSynchronizedGroups = (
 				E81FC4E62EADFEB400FB134D /* PodPlayoutTests */,
 			);
-			name = PodPlayoutTests;
+			name = SegueTests;
 			packageProductDependencies = (
 			);
 			productName = PodPlayoutTests;
-			productReference = E81FC4E32EADFEB400FB134D /* PodPlayoutTests.xctest */;
+			productReference = E81FC4E32EADFEB400FB134D /* SegueTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		E81FC4EC2EADFEB400FB134D /* PodPlayoutUITests */ = {
+		E81FC4EC2EADFEB400FB134D /* SegueUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E81FC4FD2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "PodPlayoutUITests" */;
+			buildConfigurationList = E81FC4FD2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "SegueUITests" */;
 			buildPhases = (
 				E81FC4E92EADFEB400FB134D /* Sources */,
 				E81FC4EA2EADFEB400FB134D /* Frameworks */,
@@ -156,11 +156,11 @@
 			fileSystemSynchronizedGroups = (
 				E81FC4F02EADFEB400FB134D /* PodPlayoutUITests */,
 			);
-			name = PodPlayoutUITests;
+			name = SegueUITests;
 			packageProductDependencies = (
 			);
 			productName = PodPlayoutUITests;
-			productReference = E81FC4ED2EADFEB400FB134D /* PodPlayoutUITests.xctest */;
+			productReference = E81FC4ED2EADFEB400FB134D /* SegueUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -186,7 +186,7 @@
 					};
 				};
 			};
-			buildConfigurationList = E81FC4D12EADFEB100FB134D /* Build configuration list for PBXProject "PodPlayout" */;
+			buildConfigurationList = E81FC4D12EADFEB100FB134D /* Build configuration list for PBXProject "Segue" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -200,9 +200,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				E81FC4D52EADFEB100FB134D /* PodPlayout */,
-				E81FC4E22EADFEB400FB134D /* PodPlayoutTests */,
-				E81FC4EC2EADFEB400FB134D /* PodPlayoutUITests */,
+				E81FC4D52EADFEB100FB134D /* Segue */,
+				E81FC4E22EADFEB400FB134D /* SegueTests */,
+				E81FC4EC2EADFEB400FB134D /* SegueUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -258,12 +258,12 @@
 /* Begin PBXTargetDependency section */
 		E81FC4E52EADFEB400FB134D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = E81FC4D52EADFEB100FB134D /* PodPlayout */;
+			target = E81FC4D52EADFEB100FB134D /* Segue */;
 			targetProxy = E81FC4E42EADFEB400FB134D /* PBXContainerItemProxy */;
 		};
 		E81FC4EF2EADFEB400FB134D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = E81FC4D52EADFEB100FB134D /* PodPlayout */;
+			target = E81FC4D52EADFEB100FB134D /* Segue */;
 			targetProxy = E81FC4EE2EADFEB400FB134D /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -465,7 +465,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PodPlayout.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PodPlayout";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Segue.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Segue";
 			};
 			name = Debug;
 		};
@@ -485,7 +485,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PodPlayout.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PodPlayout";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Segue.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Segue";
 			};
 			name = Release;
 		};
@@ -528,7 +528,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		E81FC4D12EADFEB100FB134D /* Build configuration list for PBXProject "PodPlayout" */ = {
+		E81FC4D12EADFEB100FB134D /* Build configuration list for PBXProject "Segue" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E81FC4F52EADFEB400FB134D /* Debug */,
@@ -537,7 +537,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		E81FC4F72EADFEB400FB134D /* Build configuration list for PBXNativeTarget "PodPlayout" */ = {
+		E81FC4F72EADFEB400FB134D /* Build configuration list for PBXNativeTarget "Segue" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E81FC4F82EADFEB400FB134D /* Debug */,
@@ -546,7 +546,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		E81FC4FA2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "PodPlayoutTests" */ = {
+		E81FC4FA2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "SegueTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E81FC4FB2EADFEB400FB134D /* Debug */,
@@ -555,7 +555,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		E81FC4FD2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "PodPlayoutUITests" */ = {
+		E81FC4FD2EADFEB400FB134D /* Build configuration list for PBXNativeTarget "SegueUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E81FC4FE2EADFEB400FB134D /* Debug */,

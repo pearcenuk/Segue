@@ -13,6 +13,8 @@ struct SegueApp: App {
         WindowGroup {
             ContentView()
                 .preferredColorScheme(.dark)
+                .frame(minWidth: 800, minHeight: 600)
         }
+        .defaultSize(width: 1100, height: 760)
     }
 }
