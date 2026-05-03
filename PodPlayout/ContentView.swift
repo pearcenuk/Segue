@@ -1156,7 +1156,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.white.opacity(0.05) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.04) : Color.clear))
             .overlay(alignment: .leading) {
                 if let rgba = t.tagColor {
                     Rectangle().fill(Color(rgba)).frame(width: 3)
@@ -1211,7 +1211,7 @@ struct ContentView: View {
                     .padding(.leading, 4)
             }
             .padding(.vertical, 7)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.white.opacity(0.05) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.04) : Color.clear))
             .contentShape(Rectangle())
             .contextMenu {
                 Button("Insert Pause Before", action: onInsertPauseBefore)
@@ -1257,18 +1257,32 @@ struct ContentView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 playlistView
-                Rectangle().fill(Color.white.opacity(0.12)).frame(height: 2)
+                Divider()
                 controls
             }
             .navigationTitle("Pod Playout")
             .toolbar {
+                // Primary: add audio files
                 ToolbarItem(placement: .primaryAction) { importButton }
+
+                // File I/O group: import / export playlist together
+                ToolbarItem(placement: .automatic) {
+                    ControlGroup {
+                        importPlaylistButton
+                        exportPlaylistButton
+                    }
+                }
+
+                // Settings
                 ToolbarItem(placement: .automatic) { settingsButton }
-                ToolbarItem(placement: .automatic) { importPlaylistButton }
-                ToolbarItem(placement: .automatic) { exportPlaylistButton }
-                ToolbarItem(placement: .automatic) { resetSessionButton }
-                ToolbarItem(placement: .automatic) { clearPlaylistButton }
-                ToolbarItem(placement: .automatic) { helpButton }
+
+                // Session group: reset / clear — visually separated from the above
+                ToolbarItem(placement: .automatic) {
+                    ControlGroup {
+                        resetSessionButton
+                        clearPlaylistButton
+                    }
+                }
             }
             .onAppear {
                 vm.loadPersistedPlaylist()
@@ -1573,7 +1587,7 @@ struct ContentView: View {
                             Text(vm.items[idx].displayName)
                                 .font(.system(size: 28, weight: .bold))
                                 .lineLimit(3)
-                                .foregroundStyle(vm.isNearingEnd ? .white : .primary)
+                                .foregroundStyle(flashBright ? Color.white : (vm.isNearingEnd ? Color.red : Color.primary))
                             if case .pause(let p) = vm.items[idx], let bedName = p.bedFilename {
                                 HStack(spacing: 8) {
                                     Text(bedName)
@@ -1602,7 +1616,7 @@ struct ContentView: View {
                             let total = vm.effectiveEnd - vm.currentTrimStart
                             Text("\(timeString(elapsed)) / \(timeString(total))")
                                 .font(.system(size: 28, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(vm.isNearingEnd ? Color.white.opacity(0.75) : Color.secondary)
+                                .foregroundStyle(flashBright ? Color.white.opacity(0.75) : Color.secondary)
                         }
                         Spacer(minLength: 0)
                     }
@@ -1688,7 +1702,7 @@ struct ContentView: View {
             .padding(.horizontal)
             .padding(.vertical, 10)
         }
-        .background(Color.white.opacity(0.03))
+        .background(Color.primary.opacity(0.02))
         .onReceive(clockTimer) { date in currentDate = date }
         .onChange(of: vm.isNearingEnd) { nearing in
             if nearing {
@@ -2026,7 +2040,7 @@ struct MeterBarView: View {
             let h = geo.size.height
             ZStack {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.07))
+                    .fill(Color.primary.opacity(0.06))
 
                 // Level fill — VStack+Spacer keeps bar pinned to bottom
                 VStack(spacing: 0) {
