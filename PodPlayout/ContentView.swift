@@ -1512,6 +1512,13 @@ struct ContentView: View {
                                 .font(.system(size: 28, weight: .bold))
                                 .lineLimit(3)
                                 .foregroundStyle(vm.isNearingEnd ? .white : .primary)
+                            if case .pause(let p) = vm.items[idx], let bedName = p.bedFilename {
+                                Text(bedName)
+                                    .font(.system(size: 20, weight: .regular).italic())
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             Text("—")
                                 .font(.system(size: 28, weight: .bold))
