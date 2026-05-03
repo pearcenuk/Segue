@@ -789,9 +789,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
             items = rebuilt
             let hasMissing = rebuilt.contains { if case .track(let t) = $0 { return t.isMissing } else { return false } }
-            // Always save when no tracks are missing: migrates old playlists to include filePath
-            // so path-based fallback works next time a network volume is offline.
-            if !hasMissing { savePlaylist() }
+            // Only save when every decoded item loaded successfully (nothing dropped, no missing files).
+            // This migrates old playlists to include filePath while SMB is mounted.
+            // If rebuilt.count < decoded.count some bookmarks failed with no path fallback —
+            // don't save or we'll overwrite the saved data with a truncated/empty playlist.
+            if !hasMissing && rebuilt.count == decoded.count { savePlaylist() }
             let unscanned = rebuilt.compactMap { item -> UUID? in
                 if case .track(let t) = item, t.normalizeGain == nil, !t.isMissing { return t.id }
                 return nil
