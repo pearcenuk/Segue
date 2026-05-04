@@ -1605,33 +1605,32 @@ struct ContentView: View {
     private var controls: some View {
         VStack(spacing: 0) {
             // Clock bar
-            HStack(alignment: .bottom, spacing: 0) {
+            HStack(spacing: 0) {
                 Spacer()
-                HStack(alignment: .bottom, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .center, spacing: 28) {
+                    VStack(alignment: .center, spacing: 3) {
                         Text("CLOCK")
-                            .font(.caption.weight(.semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(.secondary)
                         Text(currentDate, format: .dateTime.hour().minute().second())
-                            .font(.title2.weight(.semibold).monospacedDigit())
+                            .font(.system(size: 30, weight: .semibold, design: .monospaced))
                     }
                     if remainingPlaylistDuration > 0 {
-                        Divider().frame(height: 42)
+                        Divider().frame(height: 52)
                         let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 3) {
                             Text("SHOW ENDS ~")
-                                .font(.caption.weight(.semibold))
+                                .font(.footnote.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Text(endDate, format: .dateTime.hour().minute().second())
-                                .font(.title2.weight(.semibold).monospacedDigit())
+                                .font(.system(size: 30, weight: .semibold, design: .monospaced))
                         }
                     }
                 }
                 Spacer()
             }
             .padding(.horizontal)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
+            .padding(.vertical, 12)
 
             Divider().opacity(0.7)
 
