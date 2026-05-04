@@ -124,8 +124,10 @@ struct SegueCommands: Commands {
             .disabled(vm == nil || vm?.items.isEmpty == true)
         }
 
-        // ── View menu ───────────────────────────────────────────────────────
-        CommandMenu("View") {
+        // ── View menu — inject into the system's existing View menu ────────
+        // (CommandMenu("View") would create a duplicate; CommandGroup injects instead)
+        CommandGroup(after: .toolbar) {
+            Divider()
             Toggle("Controls on Top", isOn: Binding(
                 get: { vm?.controlsOnTop ?? false },
                 set: { vm?.controlsOnTop = $0 }
