@@ -8,12 +8,12 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import UniformTypeIdentifiers
 
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
 import AppKit
-import UniformTypeIdentifiers
 #endif
 
 // MARK: - Models
@@ -207,9 +207,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     private let storageKey = "playlist.bookmarks.v1"
     private let defaultsKey = "playlist.defaults.v1"
 
-    // Load files (mp3, wav)
+    // Load files — all formats AVAudioPlayer supports on macOS
     func addFiles(urls: [URL]) {
-        let supported: Set<String> = ["mp3", "wav"]
+        let supported: Set<String> = ["mp3", "wav", "aiff", "aif", "m4a", "flac", "aac", "caf", "mp4"]
         let newItems: [PlaylistItem] = urls
             .filter { supported.contains($0.pathExtension.lowercased()) }
             .map { url in
@@ -855,12 +855,20 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     // MARK: - Panel functions (called from menu bar or toolbar)
+
+    /// All audio formats AVAudioPlayer supports on macOS 13+.
+    /// Built-in UTType constants cover MP3/WAV/AIFF/M4A; the rest are resolved by extension.
+    static var audioContentTypes: [UTType] {
+        [.mp3, .wav, .aiff, .mpeg4Audio] +
+        ["flac", "aac", "caf", "mp4"].compactMap { UTType(filenameExtension: $0) }
+    }
+
     func openTrackPicker() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.allowedFileTypes = ["mp3", "wav"]
+        panel.allowedContentTypes = Self.audioContentTypes
         guard panel.runModal() == .OK else { return }
         addFiles(urls: panel.urls)
         savePlaylist()
@@ -1996,7 +2004,7 @@ struct ContentView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedFileTypes = ["mp3", "wav", "aiff", "m4a"]
+        panel.allowedContentTypes = PlayoutViewModel.audioContentTypes
         guard panel.runModal() == .OK, let url = panel.url else { return }
         vm.assignBed(url: url, to: index)
     }
