@@ -1604,38 +1604,46 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(spacing: 0) {
-            // Clock bar — single line: Clock : <time>  |  Show Ends ~ : <time>
+            // Clock bar — two styled cards
             HStack(spacing: 0) {
                 Spacer()
-                HStack(alignment: .center, spacing: 6) {
-                    Text("Clock")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(":")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Text(currentDate, format: .dateTime.hour().minute().second())
-                        .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                HStack(spacing: 16) {
+                    // Clock card
+                    VStack(spacing: 3) {
+                        Text("CLOCK")
+                            .font(.system(size: 10, weight: .heavy))
+                            .kerning(2)
+                            .foregroundStyle(.secondary)
+                        Text(currentDate, format: .dateTime.hour().minute().second())
+                            .font(.system(size: 34, weight: .bold, design: .monospaced))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.07)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+
                     if remainingPlaylistDuration > 0 {
-                        Text("|")
-                            .font(.title2)
-                            .foregroundStyle(.quaternary)
-                            .padding(.horizontal, 8)
                         let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
-                        Text("Show Ends ~")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(":")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Text(endDate, format: .dateTime.hour().minute().second())
-                            .font(.system(size: 28, weight: .semibold, design: .monospaced))
+                        // Show Ends card — accent-tinted to signal it's a target
+                        VStack(spacing: 3) {
+                            Text("SHOW ENDS ~")
+                                .font(.system(size: 10, weight: .heavy))
+                                .kerning(2)
+                                .foregroundStyle(Color.accentColor.opacity(0.8))
+                            Text(endDate, format: .dateTime.hour().minute().second())
+                                .font(.system(size: 34, weight: .bold, design: .monospaced))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.08)))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.25), lineWidth: 1))
                     }
                 }
                 Spacer()
             }
             .padding(.horizontal)
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
 
             Divider().opacity(0.7)
 
