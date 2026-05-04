@@ -128,9 +128,9 @@ struct SegueCommands: Commands {
         // (CommandMenu("View") would create a duplicate; CommandGroup injects instead)
         CommandGroup(after: .toolbar) {
             Divider()
-            Toggle("Controls on Top", isOn: Binding(
-                get: { vm?.controlsOnTop ?? false },
-                set: { vm?.controlsOnTop = $0 }
+            Toggle("Playlist at Bottom", isOn: Binding(
+                get: { vm?.playlistAtBottom ?? true },
+                set: { vm?.playlistAtBottom = $0 }
             ))
         }
 

@@ -193,9 +193,14 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var showingKeyboardShortcuts: Bool = false
     var lastExportDirectory: URL? = nil
 
-    // Layout preference — persisted to UserDefaults
-    @Published var controlsOnTop: Bool = UserDefaults.standard.bool(forKey: "controlsOnTop") {
-        didSet { UserDefaults.standard.set(controlsOnTop, forKey: "controlsOnTop") }
+    // Layout preference — persisted to UserDefaults (default: playlist at bottom)
+    @Published var playlistAtBottom: Bool = {
+        let ud = UserDefaults.standard
+        // If the key has never been set, default to true (playlist at bottom)
+        guard ud.object(forKey: "playlistAtBottom") != nil else { return true }
+        return ud.bool(forKey: "playlistAtBottom")
+    }() {
+        didSet { UserDefaults.standard.set(playlistAtBottom, forKey: "playlistAtBottom") }
     }
 
     @Published var bedIsPlaying: Bool = false
@@ -1327,7 +1332,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if vm.controlsOnTop {
+                if vm.playlistAtBottom {
                     controls
                     Divider()
                     playlistView
@@ -1608,17 +1613,17 @@ struct ContentView: View {
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                         Text(currentDate, format: .dateTime.hour().minute().second())
-                            .font(.title3.weight(.semibold).monospacedDigit())
+                            .font(.title2.weight(.semibold).monospacedDigit())
                     }
                     if remainingPlaylistDuration > 0 {
-                        Divider().frame(height: 36)
+                        Divider().frame(height: 42)
                         let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("SHOW ENDS ~")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Text(endDate, format: .dateTime.hour().minute().second())
-                                .font(.title3.weight(.semibold).monospacedDigit())
+                                .font(.title2.weight(.semibold).monospacedDigit())
                         }
                     }
                 }
