@@ -1604,33 +1604,38 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(spacing: 0) {
-            // Clock bar
+            // Clock bar — single line: Clock : <time>  |  Show Ends ~ : <time>
             HStack(spacing: 0) {
                 Spacer()
-                HStack(alignment: .center, spacing: 28) {
-                    VStack(alignment: .center, spacing: 3) {
-                        Text("CLOCK")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(currentDate, format: .dateTime.hour().minute().second())
-                            .font(.system(size: 30, weight: .semibold, design: .monospaced))
-                    }
+                HStack(alignment: .center, spacing: 6) {
+                    Text("Clock")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(":")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text(currentDate, format: .dateTime.hour().minute().second())
+                        .font(.system(size: 28, weight: .semibold, design: .monospaced))
                     if remainingPlaylistDuration > 0 {
-                        Divider().frame(height: 52)
+                        Text("|")
+                            .font(.title2)
+                            .foregroundStyle(.quaternary)
+                            .padding(.horizontal, 8)
                         let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
-                        VStack(alignment: .center, spacing: 3) {
-                            Text("SHOW ENDS ~")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(endDate, format: .dateTime.hour().minute().second())
-                                .font(.system(size: 30, weight: .semibold, design: .monospaced))
-                        }
+                        Text("Show Ends ~")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(":")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Text(endDate, format: .dateTime.hour().minute().second())
+                            .font(.system(size: 28, weight: .semibold, design: .monospaced))
                     }
                 }
                 Spacer()
             }
             .padding(.horizontal)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
 
             Divider().opacity(0.7)
 
