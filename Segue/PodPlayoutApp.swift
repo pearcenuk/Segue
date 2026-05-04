@@ -16,5 +16,12 @@ struct SegueApp: App {
                 .frame(minWidth: 800, minHeight: 600)
         }
         .defaultSize(width: 1100, height: 760)
+        .commands { SegueCommands() }
+
+        Window("Segue Help", id: "segue-help") {
+            HelpView()
+                .preferredColorScheme(.dark)
+        }
+        .defaultSize(width: 800, height: 580)
     }
 }
