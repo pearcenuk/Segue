@@ -1169,7 +1169,7 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 // Track index
                 Text(trackNumber.map { "\($0)" } ?? "")
-                    .font(.system(size: 13).monospacedDigit())
+                    .font(.system(size: 14).monospacedDigit())
                     .foregroundStyle(Color.primary.opacity(0.55))
                     .frame(width: 26, alignment: .trailing)
                 // Status icon (fixed width to keep title aligned)
@@ -1188,7 +1188,7 @@ struct ContentView: View {
                         .help("File not found — track will fail to play")
                 }
                 Text(t.title)
-                    .font(.body)
+                    .font(.system(size: 15))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(t.tagColor.map { Color($0) } ?? Color.primary)
@@ -1198,7 +1198,7 @@ struct ContentView: View {
                     HStack(spacing: 3) {
                         if isTrimmed { Image(systemName: "scissors").font(.caption2) }
                         Text(timeStringStatic(d))
-                            .font(.callout.monospacedDigit())
+                            .font(.system(size: 14).monospacedDigit())
                             .frame(minWidth: 50, alignment: .trailing)
                     }
                     .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
@@ -1268,14 +1268,14 @@ struct ContentView: View {
                 Text("").frame(width: 26)
                 Color.clear.frame(width: 16)
                 Text("Pause")
-                    .font(.body.italic())
+                    .font(.system(size: 15).italic())
                     .foregroundStyle(.red)
                 if let name = bedName {
                     Text("·")
-                        .font(.body.italic())
+                        .font(.system(size: 15).italic())
                         .foregroundStyle(.red.opacity(0.65))
                     Text(name)
-                        .font(.body.italic())
+                        .font(.system(size: 15).italic())
                         .foregroundStyle(.red.opacity(0.85))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1611,11 +1611,11 @@ struct ContentView: View {
                     // Clock card
                     VStack(spacing: 3) {
                         Text("CLOCK")
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.system(size: 12, weight: .heavy))
                             .kerning(2)
                             .foregroundStyle(.secondary)
                         Text(currentDate, format: .dateTime.hour().minute().second())
-                            .font(.system(size: 34, weight: .bold, design: .monospaced))
+                            .font(.system(size: 30, weight: .bold, design: .monospaced))
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
@@ -1626,12 +1626,12 @@ struct ContentView: View {
                         let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
                         // Show Ends card — accent-tinted to signal it's a target
                         VStack(spacing: 3) {
-                            Text("SHOW ENDS ~")
-                                .font(.system(size: 10, weight: .heavy))
+                            Text("SHOW ENDS")
+                                .font(.system(size: 12, weight: .heavy))
                                 .kerning(2)
                                 .foregroundStyle(Color.accentColor.opacity(0.8))
                             Text(endDate, format: .dateTime.hour().minute().second())
-                                .font(.system(size: 34, weight: .bold, design: .monospaced))
+                                .font(.system(size: 30, weight: .bold, design: .monospaced))
                                 .foregroundStyle(Color.accentColor)
                         }
                         .padding(.horizontal, 20)
