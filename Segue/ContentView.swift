@@ -1683,7 +1683,7 @@ struct ContentView: View {
                         .disabled(vm.items.isEmpty)
                         .help("Next track")
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
-                    Button { vm.fadeOut() } label: { Label("Fade Out", systemImage: "speaker.slash.fill").font(.title3) }
+                    Button { vm.fadeOut() } label: { Label("Fade Out", systemImage: "stop.fill").font(.title3) }
                         .disabled(!vm.isPlaying)
                         .help("Fade out and stop (3 seconds)")
                         .keyboardShortcut(".", modifiers: [.command])
