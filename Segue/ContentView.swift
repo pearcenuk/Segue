@@ -1124,6 +1124,7 @@ struct ContentView: View {
     @State private var flashBright = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @AppStorage("controlsOnTop") private var controlsOnTop: Bool = false
 
     private struct PlaylistRow: View {
         let index: Int
@@ -1322,9 +1323,15 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                playlistView
-                Divider()
-                controls
+                if controlsOnTop {
+                    controls
+                    Divider()
+                    playlistView
+                } else {
+                    playlistView
+                    Divider()
+                    controls
+                }
             }
             .navigationTitle("Segue")
             .focusedSceneObject(vm)
@@ -1349,6 +1356,16 @@ struct ContentView: View {
                         resetSessionButton
                         clearPlaylistButton
                     }
+                }
+
+                // Layout toggle
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        controlsOnTop.toggle()
+                    } label: {
+                        Image(systemName: controlsOnTop ? "square.bottomhalf.filled" : "square.tophalf.filled")
+                    }
+                    .help(controlsOnTop ? "Move controls to bottom" : "Move controls to top")
                 }
             }
             .onAppear {
