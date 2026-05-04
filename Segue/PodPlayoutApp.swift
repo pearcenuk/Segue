@@ -6,9 +6,16 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
 struct SegueApp: App {
+    init() {
+        // Remove "Show Tab Bar" / "Show All Tabs" from the View menu —
+        // Segue is a single-window app and tabs make no sense here.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
