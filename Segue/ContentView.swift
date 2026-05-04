@@ -1725,7 +1725,7 @@ struct ContentView: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.13)))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.35), lineWidth: 1))
             }
-            .frame(minHeight: 120)
+            .frame(minHeight: 120, maxHeight: 180)
             .padding(.horizontal)
             .padding(.top, 10)
             .padding(.bottom, 6)
