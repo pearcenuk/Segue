@@ -187,6 +187,12 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var scanningTrackIDs: Set<UUID> = []
     @Published var defaultBedVolume: Float = 0.4
 
+    // UI state that commands + toolbar both need to trigger
+    @Published var showingSettings: Bool = false
+    @Published var showingClearConfirm: Bool = false
+    @Published var showingKeyboardShortcuts: Bool = false
+    var lastExportDirectory: URL? = nil
+
     @Published var bedIsPlaying: Bool = false
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
@@ -848,6 +854,63 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         } catch { print("Failed to save playlist: \(error)") }
     }
 
+    // MARK: - Panel functions (called from menu bar or toolbar)
+    func openTrackPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedFileTypes = ["mp3", "wav"]
+        guard panel.runModal() == .OK else { return }
+        addFiles(urls: panel.urls)
+        savePlaylist()
+    }
+
+    func openImportPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedFileTypes = ["json"]
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url) else { return }
+        try? importPlaylistData(data)
+    }
+
+    func openExportPanel() {
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["json"]
+        panel.nameFieldStringValue = "playlist.json"
+        if let dir = lastExportDirectory { panel.directoryURL = dir }
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = exportPlaylistData() else { return }
+        do {
+            let dir = url.deletingLastPathComponent()
+            let tmp = dir.appendingPathComponent(".tmp-\(UUID().uuidString).json")
+            try data.write(to: tmp, options: .atomic)
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            try FileManager.default.moveItem(at: tmp, to: url)
+            lastExportDirectory = dir
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Export failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    func clearPlaylist() {
+        stopPlayback()
+        stopBed()
+        items.removeAll()
+        currentIndex = nil
+        savePlaylist()
+    }
+
     // MARK: - File-based import/export
     func exportPlaylistData() -> Data? {
         let persisted: [PersistedItem] = items.compactMap { item in
@@ -1050,14 +1113,9 @@ struct ContentView: View {
     @State private var trimEditorDuration: Double = 60
 
     @State private var dropTargetIndex: Int? = nil
-    
-    @State private var showingSettings = false
-    @State private var lastExportDirectory: URL? = nil
     @State private var flashBright = false
-    @State private var showingKeyboardShortcuts = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    @State private var showingClearConfirm = false
 
     private struct PlaylistRow: View {
         let index: Int
@@ -1261,6 +1319,7 @@ struct ContentView: View {
                 controls
             }
             .navigationTitle("Segue")
+            .focusedSceneObject(vm)
             .toolbar {
                 // Primary: add audio files
                 ToolbarItem(placement: .primaryAction) { importButton }
@@ -1318,7 +1377,7 @@ struct ContentView: View {
             .sheet(isPresented: $showingTrimEditor) {
                 trimEditorSheet
             }
-            .sheet(isPresented: $showingSettings) {
+            .sheet(isPresented: $vm.showingSettings) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Playback Defaults").font(.title2).bold()
                     Toggle("Fade out into next track by default", isOn: $vm.defaultCrossfadeEnabled)
@@ -1353,7 +1412,7 @@ struct ContentView: View {
                                 }
                             }
                             vm.savePlaylist()
-                            showingSettings = false
+                            vm.showingSettings = false
                         }
                         .keyboardShortcut(.defaultAction)
                     }
@@ -1361,7 +1420,7 @@ struct ContentView: View {
                 .padding()
                 .frame(minWidth: 360)
             }
-            .sheet(isPresented: $showingKeyboardShortcuts) {
+            .sheet(isPresented: $vm.showingKeyboardShortcuts) {
                 keyboardShortcutsSheet
             }
         }
@@ -1693,7 +1752,7 @@ struct ContentView: View {
                     Button("") { vm.seekBackward() }.keyboardShortcut(.leftArrow, modifiers: []).disabled(!vm.isPlaying)
                     Button("") { vm.seekForward() }.keyboardShortcut(.rightArrow, modifiers: []).disabled(!vm.isPlaying)
                     Button("") { vm.seekToNearEnd() }.keyboardShortcut("e", modifiers: [.command]).disabled(!vm.isPlaying)
-                    Button("") { showingKeyboardShortcuts = true }.keyboardShortcut("?", modifiers: [])
+                    Button("") { vm.showingKeyboardShortcuts = true }.keyboardShortcut("?", modifiers: [])
                 }.frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Spacer()
             }
@@ -1714,7 +1773,7 @@ struct ContentView: View {
     }
 
     private var importButton: some View {
-        Button { openTrackPicker() } label: {
+        Button { vm.openTrackPicker() } label: {
             Label("Add Audio", systemImage: "plus")
         }
         .keyboardShortcut(.init("o"), modifiers: [.command])
@@ -1723,7 +1782,7 @@ struct ContentView: View {
     
     private var settingsButton: some View {
         Button {
-            showingSettings = true
+            vm.showingSettings = true
         } label: {
             Label("Settings", systemImage: "gearshape")
         }
@@ -1731,7 +1790,7 @@ struct ContentView: View {
     }
     
     private var importPlaylistButton: some View {
-        Button { openImportPanel() } label: {
+        Button { vm.openImportPanel() } label: {
             Label("Import", systemImage: "square.and.arrow.down")
         }
         .help("Import playlist from JSON file")
@@ -1739,7 +1798,7 @@ struct ContentView: View {
     }
 
     private var exportPlaylistButton: some View {
-        Button { openExportPanel() } label: {
+        Button { vm.openExportPanel() } label: {
             Label("Export", systemImage: "square.and.arrow.up")
         }
         .help("Export playlist to JSON file")
@@ -1759,20 +1818,14 @@ struct ContentView: View {
 
     private var clearPlaylistButton: some View {
         Button(role: .destructive) {
-            showingClearConfirm = true
+            vm.showingClearConfirm = true
         } label: {
             Label("Clear Playlist", systemImage: "trash")
         }
         .help("Clear all tracks from playlist")
         .disabled(vm.items.isEmpty)
-        .confirmationDialog("Clear playlist?", isPresented: $showingClearConfirm) {
-            Button("Clear", role: .destructive) {
-                vm.stopPlayback()
-                vm.stopBed()
-                vm.items.removeAll()
-                vm.currentIndex = nil
-                vm.savePlaylist()
-            }
+        .confirmationDialog("Clear playlist?", isPresented: $vm.showingClearConfirm) {
+            Button("Clear", role: .destructive) { vm.clearPlaylist() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove all tracks and pauses.")
@@ -1781,7 +1834,7 @@ struct ContentView: View {
 
     private var helpButton: some View {
         Button {
-            showingKeyboardShortcuts = true
+            vm.showingKeyboardShortcuts = true
         } label: {
             Label("Keyboard Shortcuts", systemImage: "questionmark.circle")
         }
@@ -1838,7 +1891,7 @@ struct ContentView: View {
             HStack {
                 Spacer()
                 Button("Close") {
-                    showingKeyboardShortcuts = false
+                    vm.showingKeyboardShortcuts = false
                 }
                 .keyboardShortcut(.defaultAction)
             }
@@ -1938,17 +1991,6 @@ struct ContentView: View {
         vm.savePlaylist()
     }
 
-    private func openTrackPicker() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.allowedFileTypes = ["mp3", "wav"]
-        guard panel.runModal() == .OK else { return }
-        vm.addFiles(urls: panel.urls)
-        vm.savePlaylist()
-    }
-
     private func openBedPicker(for index: Int) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -1957,43 +1999,6 @@ struct ContentView: View {
         panel.allowedFileTypes = ["mp3", "wav", "aiff", "m4a"]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         vm.assignBed(url: url, to: index)
-    }
-
-    private func openImportPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedFileTypes = ["json"]
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url) else { return }
-        try? vm.importPlaylistData(data)
-    }
-
-    private func openExportPanel() {
-        let panel = NSSavePanel()
-        panel.allowedFileTypes = ["json"]
-        panel.nameFieldStringValue = "playlist.json"
-        if let dir = lastExportDirectory { panel.directoryURL = dir }
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = vm.exportPlaylistData() else { return }
-        do {
-            let dir = url.deletingLastPathComponent()
-            let tmp = dir.appendingPathComponent(".tmp-\(UUID().uuidString).json")
-            try data.write(to: tmp, options: .atomic)
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
-            try FileManager.default.moveItem(at: tmp, to: url)
-            lastExportDirectory = dir
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "Export failed"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-        }
     }
 
 }
