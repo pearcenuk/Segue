@@ -1760,20 +1760,28 @@ struct ContentView: View {
 
             Divider().opacity(0.7)
 
-            // Transport controls
+            // Transport controls — three zones so Play sits dead-centre
             HStack(spacing: 0) {
-                Spacer()
+                // Left zone
                 HStack(spacing: 20) {
                     Button { vm.previous() } label: { Image(systemName: "backward.end.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .help("Previous track")
                         .keyboardShortcut(.leftArrow, modifiers: [.command])
-                    Button { vm.togglePlayPause() } label: {
-                        Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title2)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(vm.items.isEmpty)
-                    .keyboardShortcut(.space, modifiers: [])
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 24)
+
+                // Centre: Play / Pause
+                Button { vm.togglePlayPause() } label: {
+                    Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill").font(.title2)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(vm.items.isEmpty)
+                .keyboardShortcut(.space, modifiers: [])
+
+                // Right zone
+                HStack(spacing: 20) {
                     Button { vm.next() } label: { Image(systemName: "forward.end.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .help("Next track")
@@ -1783,15 +1791,16 @@ struct ContentView: View {
                         .help("Fade out and stop (3 seconds)")
                         .keyboardShortcut(".", modifiers: [.command])
                 }
-                // Hidden buttons preserve keyboard shortcuts without cluttering the UI
-                Group {
-                    Button("") { vm.seekBackward() }.keyboardShortcut(.leftArrow, modifiers: []).disabled(!vm.isPlaying)
-                    Button("") { vm.seekForward() }.keyboardShortcut(.rightArrow, modifiers: []).disabled(!vm.isPlaying)
-                    Button("") { vm.seekToNearEnd() }.keyboardShortcut("e", modifiers: [.command]).disabled(!vm.isPlaying)
-                    Button("") { vm.showingKeyboardShortcuts = true }.keyboardShortcut("?", modifiers: [])
-                }.frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 24)
             }
+            // Hidden buttons preserve keyboard shortcuts without cluttering the UI
+            .background(Group {
+                Button("") { vm.seekBackward() }.keyboardShortcut(.leftArrow, modifiers: []).disabled(!vm.isPlaying)
+                Button("") { vm.seekForward() }.keyboardShortcut(.rightArrow, modifiers: []).disabled(!vm.isPlaying)
+                Button("") { vm.seekToNearEnd() }.keyboardShortcut("e", modifiers: [.command]).disabled(!vm.isPlaying)
+                Button("") { vm.showingKeyboardShortcuts = true }.keyboardShortcut("?", modifiers: [])
+            }.frame(width: 0, height: 0).opacity(0).accessibilityHidden(true))
             .padding(.horizontal)
             .padding(.vertical, 10)
         }
