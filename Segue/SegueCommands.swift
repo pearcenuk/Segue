@@ -124,6 +124,14 @@ struct SegueCommands: Commands {
             .disabled(vm == nil || vm?.items.isEmpty == true)
         }
 
+        // ── View menu ───────────────────────────────────────────────────────
+        CommandMenu("View") {
+            Toggle("Controls on Top", isOn: Binding(
+                get: { vm?.controlsOnTop ?? false },
+                set: { vm?.controlsOnTop = $0 }
+            ))
+        }
+
         // ── Help menu ───────────────────────────────────────────────────────
         CommandGroup(replacing: .help) {
             Button("Keyboard Shortcuts") {

@@ -193,6 +193,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var showingKeyboardShortcuts: Bool = false
     var lastExportDirectory: URL? = nil
 
+    // Layout preference — persisted to UserDefaults
+    @Published var controlsOnTop: Bool = UserDefaults.standard.bool(forKey: "controlsOnTop") {
+        didSet { UserDefaults.standard.set(controlsOnTop, forKey: "controlsOnTop") }
+    }
+
     @Published var bedIsPlaying: Bool = false
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
@@ -1124,7 +1129,6 @@ struct ContentView: View {
     @State private var flashBright = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    @AppStorage("controlsOnTop") private var controlsOnTop: Bool = false
 
     private struct PlaylistRow: View {
         let index: Int
@@ -1323,7 +1327,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if controlsOnTop {
+                if vm.controlsOnTop {
                     controls
                     Divider()
                     playlistView
@@ -1336,10 +1340,10 @@ struct ContentView: View {
             .navigationTitle("Segue")
             .focusedSceneObject(vm)
             .toolbar {
-                // Primary: add audio files
+                // Add audio — primary / most-used action
                 ToolbarItem(placement: .primaryAction) { importButton }
 
-                // File I/O group: import / export playlist together
+                // File I/O: import & export playlist as a pair
                 ToolbarItem(placement: .automatic) {
                     ControlGroup {
                         importPlaylistButton
@@ -1347,10 +1351,7 @@ struct ContentView: View {
                     }
                 }
 
-                // Settings
-                ToolbarItem(placement: .automatic) { settingsButton }
-
-                // Session group: reset / clear — visually separated from the above
+                // Session lifecycle: reset & clear as a pair
                 ToolbarItem(placement: .automatic) {
                     ControlGroup {
                         resetSessionButton
@@ -1358,15 +1359,8 @@ struct ContentView: View {
                     }
                 }
 
-                // Layout toggle
-                ToolbarItem(placement: .automatic) {
-                    Button {
-                        controlsOnTop.toggle()
-                    } label: {
-                        Image(systemName: controlsOnTop ? "square.bottomhalf.filled" : "square.tophalf.filled")
-                    }
-                    .help(controlsOnTop ? "Move controls to bottom" : "Move controls to top")
-                }
+                // Settings — least-touched, sits at the quiet end
+                ToolbarItem(placement: .automatic) { settingsButton }
             }
             .onAppear {
                 vm.loadPersistedPlaylist()
