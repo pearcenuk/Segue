@@ -178,10 +178,11 @@ private struct GettingStartedHelp: View {
             .padding(.leading, 4)
 
             HelpSubheading(text: "The interface at a glance")
-            HelpBody(text: "The top half is the playlist. Each track shows its title, duration, and status. Green checkmarks indicate played tracks. A red speaker icon marks the currently playing track.")
-            HelpBody(text: "The bottom half is the control area. The **Clock** shows the current time; **Show Ends** estimates when the playlist will finish based on remaining track durations. The large ON AIR and NEXT panels give you an at-a-glance broadcast view.")
+            HelpBody(text: "The window is split between the **playlist** and the **control area**. By default the controls sit above the playlist — use **View › Playlist at Bottom** to toggle the layout. Segue remembers your preference.")
+            HelpBody(text: "The playlist shows each track's title, duration, and status. Green checkmarks mark played tracks; a red speaker marks the currently playing one.")
+            HelpBody(text: "The control area contains the **Clock / Show Ends** bar, the progress scrubber, the large **ON AIR** and **NEXT** broadcast panels, and the transport buttons.")
 
-            HelpTip(text: "Segue automatically saves your playlist between sessions. You'll find your tracks restored exactly as you left them the next time you open the app.")
+            HelpTip(text: "Segue automatically saves your playlist between sessions. Your tracks, trim points, crossfade settings, and tag colours are all restored the next time you open the app.")
         }
     }
 }
@@ -192,8 +193,8 @@ private struct BuildingPlaylistHelp: View {
             HelpHeading(text: "Building a Playlist")
 
             HelpSubheading(text: "Adding tracks")
-            HelpBody(text: "Click the **+** button in the toolbar or use **File › Add Audio Files…** (⌘O). Segue accepts MP3 and WAV files. You can select multiple files at once — they're added in the order returned by the file picker.")
-            HelpTip(text: "Drag files directly from Finder onto the playlist window to add them.")
+            HelpBody(text: "Click the **+** button in the toolbar or use **File › Add Audio Files…** (⌘O). You can select multiple files at once — they're added in the order returned by the file picker.")
+            HelpBody(text: "Supported formats: **MP3, WAV, AIFF, M4A, FLAC, AAC, CAF, MP4**. If your file isn't listed in the picker, check its extension is one of these.")
 
             HelpSubheading(text: "Reordering")
             HelpBody(text: "Drag any row by its handle (the three horizontal lines on the right) to move it. You can also drag a track to the very top or bottom and the list will scroll automatically.")
@@ -219,7 +220,7 @@ private struct PlaybackHelp: View {
             HelpHeading(text: "Playback")
 
             HelpSubheading(text: "Transport controls")
-            HelpBody(text: "The transport row at the bottom of the window contains the main playback controls:")
+            HelpBody(text: "The transport row contains the main playback controls, centred with Play in the middle:")
             VStack(alignment: .leading, spacing: 6) {
                 Label("**⏮** (⌘←)  — Jump to the previous track", systemImage: "backward.end.fill")
                 Label("**▶ / ⏸** (Space)  — Play or pause the current track", systemImage: "play.fill")
@@ -279,7 +280,7 @@ private struct PausesBedsHelp: View {
 
             HelpSubheading(text: "Bed music")
             HelpBody(text: "You can assign a bed track to any pause. A bed is a music or ambient audio file that loops continuously while the pause is active. When playback reaches the pause, the bed fades in automatically.")
-            HelpBody(text: "To assign a bed: right-click a pause row and choose **Assign Bed…**. Select an MP3, WAV, AIFF, or M4A file. The filename appears next to the pause label.")
+            HelpBody(text: "To assign a bed: right-click a pause row and choose **Assign Bed…**. Any supported audio format works (MP3, WAV, AIFF, M4A, FLAC, AAC, CAF, MP4). The filename appears next to the pause label.")
             HelpBody(text: "While a bed is playing you'll see a play/pause button next to the bed name in the ON AIR panel. Press **B** to toggle the bed without touching the mouse.")
 
             HelpSubheading(text: "Bed volume")
@@ -328,7 +329,18 @@ private struct FileManagementHelp: View {
             HelpWarning(text: "Segue will not prompt you to mount or authenticate a network drive — this is by design to avoid blocking the app during startup. If tracks are missing, connect the drive manually in Finder first.")
 
             HelpSubheading(text: "Supported formats")
-            HelpBody(text: "Segue plays **MP3** and **WAV** files. Bed music also supports **AIFF** and **M4A**.")
+            HelpBody(text: "Segue plays any format that macOS can decode. This includes:")
+            VStack(alignment: .leading, spacing: 4) {
+                HelpShortcutRow(key: "MP3",  description: ".mp3 — most common compressed format")
+                HelpShortcutRow(key: "WAV",  description: ".wav — uncompressed PCM")
+                HelpShortcutRow(key: "AIFF", description: ".aiff / .aif — Apple uncompressed, common in radio")
+                HelpShortcutRow(key: "M4A",  description: ".m4a — iTunes / AAC in MPEG-4 container")
+                HelpShortcutRow(key: "AAC",  description: ".aac — AAC standalone")
+                HelpShortcutRow(key: "FLAC", description: ".flac — lossless compressed")
+                HelpShortcutRow(key: "CAF",  description: ".caf — Core Audio Format (GarageBand etc.)")
+                HelpShortcutRow(key: "MP4",  description: ".mp4 — audio in MPEG-4 container")
+            }
+            HelpBody(text: "All formats are supported equally for both tracks and bed music.")
 
             HelpSubheading(text: "Missing files")
             HelpBody(text: "A yellow triangle (⚠) appears next to any track whose file cannot be found. The track remains in the playlist and Segue will skip it during playback. Move the file back to its original location, or remove and re-add the track.")
@@ -374,10 +386,16 @@ private struct KeyboardShortcutsHelp: View {
 
             HelpSubheading(text: "App")
             VStack(alignment: .leading, spacing: 4) {
-                HelpShortcutRow(key: "⌘ ,",       description: "Settings")
-                HelpShortcutRow(key: "⌘ /",       description: "Keyboard shortcuts panel")
-                HelpShortcutRow(key: "?",          description: "Keyboard shortcuts panel")
+                HelpShortcutRow(key: "⌘ ,",          description: "Settings")
+                HelpShortcutRow(key: "⌘ /",          description: "Keyboard shortcuts panel")
+                HelpShortcutRow(key: "?",             description: "Keyboard shortcuts panel")
             }
+
+            HelpSubheading(text: "View")
+            VStack(alignment: .leading, spacing: 4) {
+                HelpShortcutRow(key: "View menu",     description: "Playlist at Bottom — toggle layout")
+            }
+            HelpTip(text: "Segue remembers the layout you choose. Controls-above-playlist suits a presenter who wants the broadcast panels front and centre; playlist-above-controls suits someone building and cueing the show.")
         }
     }
 }
