@@ -250,6 +250,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var showingKeyboardShortcuts: Bool = false
     var lastExportDirectory: URL? = nil
 
+    // Currently loaded playlist file name (without .json extension), nil when unsaved
+    @Published var currentPlaylistName: String? = nil
+
     // Play log — timestamped record of track events
     @Published var playLog: [PlayLogEntry] = []
     @Published var showingPlayLog: Bool = false
@@ -1108,13 +1111,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         panel.allowedFileTypes = ["json"]
         guard panel.runModal() == .OK, let url = panel.url,
               let data = try? Data(contentsOf: url) else { return }
-        try? importPlaylistData(data)
+        do {
+            try importPlaylistData(data)
+            currentPlaylistName = url.deletingPathExtension().lastPathComponent
+        } catch { /* ignore */ }
     }
 
     func openExportPanel() {
         let panel = NSSavePanel()
         panel.allowedFileTypes = ["json"]
-        panel.nameFieldStringValue = "playlist.json"
+        panel.nameFieldStringValue = (currentPlaylistName ?? "playlist") + ".json"
         if let dir = lastExportDirectory { panel.directoryURL = dir }
         guard panel.runModal() == .OK, let url = panel.url,
               let data = exportPlaylistData() else { return }
@@ -1127,6 +1133,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
             try FileManager.default.moveItem(at: tmp, to: url)
             lastExportDirectory = dir
+            currentPlaylistName = url.deletingPathExtension().lastPathComponent
         } catch {
             let alert = NSAlert()
             alert.messageText = "Export failed"
@@ -1142,6 +1149,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         stopBed()
         items.removeAll()
         currentIndex = nil
+        currentPlaylistName = nil
         savePlaylist()
     }
 
@@ -1637,7 +1645,7 @@ struct ContentView: View {
                     controls
                 }
             }
-            .navigationTitle("Segue")
+            .navigationTitle(vm.currentPlaylistName.map { "Segue — \($0)" } ?? "Segue")
             .focusedSceneObject(vm)
             .toolbar {
                 // Add audio — primary / most-used action
