@@ -240,7 +240,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     private var peakHoldCounters: [Int] = [0, 0]
 
     @Published var scanningTrackIDs: Set<UUID> = []
-    @Published var defaultBedVolume: Float = 0.4
+    @Published var defaultBedVolume: Float = 0.4 {
+        didSet { applyBedVolumeChange() }
+    }
 
     // UI state that commands + toolbar both need to trigger
     @Published var showingSettings: Bool = false
@@ -272,6 +274,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
     private var currentBedTargetVolume: Float = 0.4   // normalised + scaled target for the active bed
+    private var currentBedNormGain: Float = 1.0       // RMS normalisation factor for the current bed
 
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
@@ -778,8 +781,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         bedPlayer = p
         bedIsPlaying = true
         // Normalise: bring bed to -23 dBFS, then scale by the bed-volume preference.
-        let normGain = pause.bedNormalizeGain.map { min(1.0, $0) } ?? 1.0
-        currentBedTargetVolume = min(1.0, normGain * defaultBedVolume)
+        currentBedNormGain = pause.bedNormalizeGain.map { min(1.0, $0) } ?? 1.0
+        currentBedTargetVolume = min(1.0, currentBedNormGain * defaultBedVolume)
         fade(p, to: currentBedTargetVolume, duration: 1.5)
     }
 
@@ -805,6 +808,14 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             bedIsPlaying = true
             fade(b, to: currentBedTargetVolume, duration: 2.0)
         }
+    }
+
+    private func applyBedVolumeChange() {
+        // Recalculate the target using the stored norm gain and new defaultBedVolume.
+        currentBedTargetVolume = min(1.0, currentBedNormGain * defaultBedVolume)
+        // Only update the live player if the bed is audible right now.
+        guard let b = bedPlayer, bedIsPlaying else { return }
+        fade(b, to: currentBedTargetVolume, duration: 0.3)
     }
 
     func assignBed(url: URL, to index: Int) {
