@@ -1321,6 +1321,7 @@ struct ContentView: View {
         let bedName: String?
         let onAssignBed: () -> Void
         let onRemoveBed: () -> Void
+        let isPlaylistPlaying: Bool
 
         var body: some View {
             if item.isPause {
@@ -1416,6 +1417,7 @@ struct ContentView: View {
                 Button(t.crossfadeEnabled ? "Disable Fade-out to Next" : "Fade Out into Next Track", action: onToggleCrossfade)
                 Button("Set Fade-out Duration…", action: onEditCrossfade)
                 Button("Set Trim Points…", action: onEditTrim)
+                    .disabled(isPlaylistPlaying)
                 Menu("Tag Color") {
                     Button("Red") { onSetColor(RGBAColor(Color.red)) }
                     Button("Orange") { onSetColor(RGBAColor(Color.orange)) }
@@ -1759,7 +1761,8 @@ struct ContentView: View {
                     },
                     bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
                     onAssignBed: { openBedPicker(for: index) },
-                    onRemoveBed: { vm.removeBed(at: index) }
+                    onRemoveBed: { vm.removeBed(at: index) },
+                    isPlaylistPlaying: vm.isPlaying
                 )
                 .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
                 .onDrop(
@@ -2297,15 +2300,19 @@ struct ContentView: View {
 /// Manages the preview AVAudioPlayer for the trim editor so timer callbacks
 /// can safely mutate @Published state without value-type struct capture problems.
 private final class TrimPreviewState: ObservableObject {
+    enum Mode { case inPoint, outPoint }
+
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
+    @Published var mode: Mode? = nil
 
     private var player: AVAudioPlayer?
     private var scopedURL: URL?
     private var endTime: TimeInterval = 0
     private var timer: Timer?
 
-    func preview(url: URL, from start: TimeInterval, to end: TimeInterval) {
+    func preview(url: URL, from start: TimeInterval, to end: TimeInterval, mode: Mode) {
+        self.mode = mode
         stop()
         let accessing = url.startAccessingSecurityScopedResource()
         if accessing { scopedURL = url }
@@ -2334,6 +2341,7 @@ private final class TrimPreviewState: ObservableObject {
         player?.stop();      player = nil
         scopedURL?.stopAccessingSecurityScopedResource(); scopedURL = nil
         isPlaying = false
+        mode = nil
     }
 
     deinit { stop() }
@@ -2425,7 +2433,8 @@ private struct TrimEditorView: View {
                         guard let url = trackURL else { return }
                         preview.preview(url: url,
                                         from: trimStart,
-                                        to: min(trimStart + previewWindow, trimEnd))
+                                        to: min(trimStart + previewWindow, trimEnd),
+                                        mode: .inPoint)
                     } label: {
                         Label("In point", systemImage: "arrow.right.to.line.compact")
                     }
@@ -2437,20 +2446,42 @@ private struct TrimEditorView: View {
                         guard let url = trackURL else { return }
                         preview.preview(url: url,
                                         from: max(trimStart, trimEnd - previewWindow),
-                                        to: trimEnd)
+                                        to: trimEnd,
+                                        mode: .outPoint)
                     } label: {
                         Label("Out point", systemImage: "arrow.left.to.line.compact")
                     }
                     .disabled(trackURL == nil || preview.isPlaying)
                     .help("Play \(Int(previewWindow))s up to the out point")
 
-                    // Stop
+                    // While playing: Stop + Set Here
                     if preview.isPlaying {
                         Button { preview.stop() } label: {
                             Image(systemName: "stop.fill")
                         }
                         .foregroundStyle(.red)
                         .help("Stop preview")
+
+                        Button {
+                            let t = preview.currentTime
+                            switch preview.mode {
+                            case .inPoint:
+                                trimStart = t
+                                if trimEnd <= trimStart { trimEnd = min(trimStart + 1, duration) }
+                            case .outPoint:
+                                trimEnd = t
+                                if trimEnd <= trimStart { trimEnd = trimStart + 1 }
+                            case nil: break
+                            }
+                            preview.stop()
+                        } label: {
+                            Label(
+                                preview.mode == .inPoint ? "Set In Point Here" : "Set Out Point Here",
+                                systemImage: preview.mode == .inPoint ? "arrow.right.to.line" : "arrow.left.to.line"
+                            )
+                        }
+                        .foregroundStyle(.yellow)
+                        .help("Snap the trim point to the current playback position")
                     }
 
                     Spacer()
