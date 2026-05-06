@@ -2357,7 +2357,7 @@ private struct TrimEditorView: View {
 
     @StateObject private var preview = TrimPreviewState()
 
-    private let previewWindow: TimeInterval = 5
+    private let previewWindow: TimeInterval = 10
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
