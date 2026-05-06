@@ -289,6 +289,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     // Load files — all formats AVAudioPlayer supports on macOS
     func addFiles(urls: [URL]) {
+        insertFiles(urls: urls, at: items.count)
+    }
+
+    func insertFiles(urls: [URL], at index: Int) {
         let supported: Set<String> = ["mp3", "wav", "aiff", "aif", "m4a", "flac", "aac", "caf", "mp4"]
         let newItems: [PlaylistItem] = urls
             .filter { supported.contains($0.pathExtension.lowercased()) }
@@ -303,7 +307,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 if seconds.isFinite && seconds > 0 { t.durationSeconds = seconds }
                 return PlaylistItem.track(t)
             }
-        items.append(contentsOf: newItems)
+        guard !newItems.isEmpty else { return }
+        let safeIndex = max(0, min(index, items.count))
+        items.insert(contentsOf: newItems, at: safeIndex)
         savePlaylist()
         let newIDs = newItems.compactMap { if case .track(let t) = $0 { return t.id } else { return nil } }
         scanTracks(newIDs)
@@ -1362,6 +1368,7 @@ struct ContentView: View {
     @State private var trimEditorTitle: String = ""
 
     @State private var dropTargetIndex: Int? = nil
+    @State private var isFinderDropTargeted = false
     @State private var flashBright = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -1553,6 +1560,11 @@ struct ContentView: View {
     }
 
     private func handleDrop(providers: [NSItemProvider], to index: Int) -> Bool {
+        // Finder file drop takes priority over internal UUID reorder
+        if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) {
+            return handleFinderDrop(providers: providers, at: index)
+        }
+        // Internal reorder — provider carries a UUID string
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { (data, error) in
             guard error == nil else { return }
@@ -1561,6 +1573,30 @@ struct ContentView: View {
             } else if let s = data as? NSString, let uuid = UUID(uuidString: String(s)) {
                 DispatchQueue.main.async { moveItem(with: uuid, to: index) }
             }
+        }
+        return true
+    }
+
+    /// Load file URLs from Finder-drop providers (preserving provider order), then insert at index.
+    @discardableResult
+    private func handleFinderDrop(providers: [NSItemProvider], at index: Int) -> Bool {
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else { return false }
+        var urlsBySlot = [Int: URL]()
+        let group = DispatchGroup()
+        for (slot, provider) in fileProviders.enumerated() {
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (data, _) in
+                defer { group.leave() }
+                var url: URL?
+                if let d = data as? Data { url = URL(dataRepresentation: d, relativeTo: nil) }
+                else if let u = data as? URL { url = u }
+                if let u = url { urlsBySlot[slot] = u }
+            }
+        }
+        group.notify(queue: .main) {
+            let urls = urlsBySlot.sorted { $0.key < $1.key }.map(\.value)
+            vm.insertFiles(urls: urls, at: index)
         }
         return true
     }
@@ -1762,6 +1798,74 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func playlistRowView(index: Int, item: PlaylistItem, trackNum: Int?) -> some View {
+        let isTarget = dropTargetIndex == index
+        PlaylistRow(
+            index: index,
+            trackNumber: trackNum,
+            item: item,
+            isCurrent: vm.currentIndex == index,
+            isPlayed: { if case .track(let t) = item { return vm.playedTrackIDs.contains(t.id) }; return false }(),
+            onPlay: { vm.play(at: index) },
+            onInsertPauseBefore: { vm.addPause(at: index) },
+            onInsertPauseAfter: { vm.addPause(at: index + 1) },
+            onToggleCrossfade: {
+                if case .track(var t) = vm.items[index] {
+                    t.crossfadeEnabled.toggle()
+                    t.usesDefaultCrossfadeEnabled = false
+                    vm.items[index] = .track(t)
+                    vm.savePlaylist()
+                }
+            },
+            onEditCrossfade: {
+                if case .track(let t) = vm.items[index] {
+                    editingCrossfadeIndex = index
+                    pendingCrossfadeDuration = t.crossfadeDuration
+                    showingCrossfadeEditor = true
+                }
+            },
+            onEditTrim: {
+                if case .track(let t) = vm.items[index] {
+                    editingTrimIndex = index
+                    pendingTrimStart = t.trimStart
+                    let dur = t.durationSeconds ?? 60
+                    trimEditorDuration = dur
+                    pendingTrimEnd = t.trimEnd ?? dur
+                    trimEditorURL = t.url
+                    trimEditorTitle = t.title
+                    showingTrimEditor = true
+                }
+            },
+            onRemove: { vm.items.remove(at: index); vm.savePlaylist() },
+            onRemovePause: { vm.items.remove(at: index); vm.savePlaylist() },
+            onSetColor: { newColor in
+                if case .track(var t) = vm.items[index] {
+                    t.tagColor = newColor
+                    vm.items[index] = .track(t)
+                    vm.savePlaylist()
+                }
+            },
+            bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
+            onAssignBed: { openBedPicker(for: index) },
+            onRemoveBed: { vm.removeBed(at: index) },
+            isPlaylistPlaying: vm.isPlaying
+        )
+        .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
+        .onDrop(of: [UTType.text, UTType.fileURL],
+                isTargeted: Binding(
+                    get: { self.dropTargetIndex == index },
+                    set: { v in self.dropTargetIndex = v ? index : (self.dropTargetIndex == index ? nil : self.dropTargetIndex) }
+                )) { self.handleDrop(providers: $0, to: index) }
+        .overlay(alignment: .top) {
+            if isTarget {
+                Rectangle().fill(Color.accentColor).frame(height: 2)
+                    .shadow(color: Color.accentColor.opacity(0.6), radius: 4, y: 0)
+            }
+        }
+        .background(isTarget ? Color.accentColor.opacity(0.08) : Color.clear)
+    }
+
     private var playlistView: some View {
         let trackNums: [Int?] = {
             var count = 0
@@ -1774,87 +1878,31 @@ struct ContentView: View {
         ScrollViewReader { proxy in
         List {
             ForEach(Array(vm.items.enumerated()), id: \.offset) { index, item in
-                PlaylistRow(
-                    index: index,
-                    trackNumber: trackNums[index],
-                    item: item,
-                    isCurrent: vm.currentIndex == index,
-                    isPlayed: { if case .track(let t) = item { return vm.playedTrackIDs.contains(t.id) }; return false }(),
-                    onPlay: { vm.play(at: index) },
-                    onInsertPauseBefore: { vm.addPause(at: index) },
-                    onInsertPauseAfter: { vm.addPause(at: index + 1) },
-                    onToggleCrossfade: {
-                        if case .track(var t) = vm.items[index] {
-                            t.crossfadeEnabled.toggle()
-                            t.usesDefaultCrossfadeEnabled = false
-                            vm.items[index] = .track(t)
-                            vm.savePlaylist()
-                        }
-                    },
-                    onEditCrossfade: {
-                        if case .track(let t) = vm.items[index] {
-                            editingCrossfadeIndex = index
-                            pendingCrossfadeDuration = t.crossfadeDuration
-                            showingCrossfadeEditor = true
-                        }
-                    },
-                    onEditTrim: {
-                        if case .track(let t) = vm.items[index] {
-                            editingTrimIndex = index
-                            pendingTrimStart = t.trimStart
-                            let dur = t.durationSeconds ?? 60
-                            trimEditorDuration = dur
-                            pendingTrimEnd = t.trimEnd ?? dur
-                            trimEditorURL = t.url
-                            trimEditorTitle = t.title
-                            showingTrimEditor = true
-                        }
-                    },
-                    onRemove: {
-                        vm.items.remove(at: index)
-                        vm.savePlaylist()
-                    },
-                    onRemovePause: {
-                        vm.items.remove(at: index)
-                        vm.savePlaylist()
-                    },
-                    onSetColor: { newColor in
-                        if case .track(var t) = vm.items[index] {
-                            t.tagColor = newColor
-                            vm.items[index] = .track(t)
-                            vm.savePlaylist()
-                        }
-                    },
-                    bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
-                    onAssignBed: { openBedPicker(for: index) },
-                    onRemoveBed: { vm.removeBed(at: index) },
-                    isPlaylistPlaying: vm.isPlaying
-                )
-                .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
-                .onDrop(
-                    of: [UTType.text],
-                    isTargeted: Binding(
-                        get: { dropTargetIndex == index },
-                        set: { isOver in
-                            dropTargetIndex = isOver ? index : (dropTargetIndex == index ? nil : dropTargetIndex)
-                        })
-                ) { providers in
-                    handleDrop(providers: providers, to: index)
-                }
-                .overlay(alignment: .top) {
-                    if dropTargetIndex == index {
-                        Rectangle()
-                            .fill(Color.accentColor)
-                            .frame(height: 2)
-                            .shadow(color: Color.accentColor.opacity(0.6), radius: 4, y: 0)
-                    }
-                }
-                .background(dropTargetIndex == index ? Color.accentColor.opacity(0.08) : Color.clear)
+                playlistRowView(index: index, item: item, trackNum: trackNums[index])
             }
             .onMove { from, to in vm.move(from: from, to: to) }
             .onDelete { offsets in vm.remove(atOffsets: offsets) }
         }
         .listStyle(.inset)
+        // Catch Finder drops onto empty space between rows (append to end)
+        .onDrop(of: [UTType.fileURL], isTargeted: $isFinderDropTargeted) { providers in
+            handleFinderDrop(providers: providers, at: vm.items.count)
+        }
+        .overlay {
+            if vm.items.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "plus.circle.dashed")
+                        .font(.system(size: 40))
+                        .foregroundStyle(isFinderDropTargeted ? Color.accentColor : Color.secondary.opacity(0.4))
+                    Text("Drop audio files here")
+                        .font(.body)
+                        .foregroundStyle(isFinderDropTargeted ? Color.accentColor : Color.secondary.opacity(0.4))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .allowsHitTesting(false)
+            }
+        }
         .onChange(of: vm.currentIndex) { idx in
             guard let idx else { return }
             withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(idx, anchor: .top) }
