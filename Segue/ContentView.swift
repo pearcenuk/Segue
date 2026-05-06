@@ -474,22 +474,38 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             appendLog(trackTitle: current.title, event: .skipped)
 
             let nextIdx = idx + 1
-            if isPlaying,
-               current.crossfadeEnabled,
-               !isCrossfading,
-               items.indices.contains(nextIdx),
-               case .track(let incoming) = items[nextIdx] {
-                // Crossfade to next track just like the auto-advance timer does
-                isCrossfading = true
-                markCurrentAsPlayed()
-                currentIndex = nextIdx
-                crossfadeTo(url: incoming.url,
-                            duration: max(0.1, current.crossfadeDuration),
-                            targetVolume: normVolume(for: incoming))
-                DispatchQueue.main.asyncAfter(deadline: .now() + current.crossfadeDuration + 0.1) {
-                    self.isCrossfading = false
+            if items.indices.contains(nextIdx) {
+
+                // Next item is a pause — fade out properly then start bed
+                if case .pause(let p) = items[nextIdx], isPlaying {
+                    markCurrentAsPlayed()
+                    currentIndex = nextIdx
+                    pauseEnteredAt = Date()
+                    stopTimeUpdates()
+                    isPlaying = false
+                    fade(to: 0.0, duration: 0.8) {
+                        self.player?.stop()
+                        self.player = nil
+                        self.endScopedAccess()
+                        self.startBed(for: p)
+                    }
+                    return
                 }
-                return
+
+                // Next item is a track with crossfade enabled
+                if isPlaying, current.crossfadeEnabled, !isCrossfading,
+                   case .track(let incoming) = items[nextIdx] {
+                    isCrossfading = true
+                    markCurrentAsPlayed()
+                    currentIndex = nextIdx
+                    crossfadeTo(url: incoming.url,
+                                duration: max(0.1, current.crossfadeDuration),
+                                targetVolume: normVolume(for: incoming))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + current.crossfadeDuration + 0.1) {
+                        self.isCrossfading = false
+                    }
+                    return
+                }
             }
         }
 
