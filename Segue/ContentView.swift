@@ -2312,8 +2312,8 @@ private final class TrimPreviewState: ObservableObject {
     private var timer: Timer?
 
     func preview(url: URL, from start: TimeInterval, to end: TimeInterval, mode: Mode) {
+        stop()           // clears mode — set it afterwards
         self.mode = mode
-        stop()
         let accessing = url.startAccessingSecurityScopedResource()
         if accessing { scopedURL = url }
         guard let p = try? AVAudioPlayer(contentsOf: url) else {
@@ -2462,7 +2462,7 @@ private struct TrimEditorView: View {
                         .foregroundStyle(.red)
                         .help("Stop preview")
 
-                        Button {
+                        Button("Set Point") {
                             let t = preview.currentTime
                             switch preview.mode {
                             case .inPoint:
@@ -2474,11 +2474,6 @@ private struct TrimEditorView: View {
                             case nil: break
                             }
                             preview.stop()
-                        } label: {
-                            Label(
-                                preview.mode == .inPoint ? "Set In Point Here" : "Set Out Point Here",
-                                systemImage: preview.mode == .inPoint ? "arrow.right.to.line" : "arrow.left.to.line"
-                            )
                         }
                         .foregroundStyle(.yellow)
                         .help("Snap the trim point to the current playback position")
