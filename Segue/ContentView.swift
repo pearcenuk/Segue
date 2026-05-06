@@ -448,8 +448,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func nextManual() {
         guard let idx = currentIndex else { next(); return }
 
-        if let _ = items.indices.first(where: { $0 == idx }),
-           case .track(let current) = items[idx] {
+        // If sitting on a pause, fade the bed out before advancing —
+        // mirrors the Space-bar path in togglePlayPause().
+        if case .pause = items[idx] {
+            stopBed()
+            next()
+            return
+        }
+
+        if case .track(let current) = items[idx] {
             appendLog(trackTitle: current.title, event: .skipped)
 
             let nextIdx = idx + 1
