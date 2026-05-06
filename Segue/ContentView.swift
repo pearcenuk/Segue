@@ -2009,8 +2009,11 @@ struct ContentView: View {
 
             // Progress bar + time display
             VStack(spacing: 4) {
-                Slider(value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1))
-                    .focusEffectDisabled()
+                ProgressSlider(
+                    value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { _ in }),
+                    range: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1),
+                    onSeek: { vm.seek(to: $0) }
+                )
                 HStack {
                     Text(timeString(vm.currentTime))
                         .monospacedDigit()
@@ -2741,6 +2744,60 @@ private struct TrimTimelineView: View {
     private func mmss(_ t: TimeInterval) -> String {
         let n = Int(max(0, t))
         return String(format: "%d:%02d", (n / 60) % 60, n % 60)
+    }
+}
+
+// MARK: - Progress Slider (custom, avoids NSSlider ghost artifact)
+
+struct ProgressSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var onSeek: (Double) -> Void = { _ in }
+
+    @State private var isDragging = false
+    @State private var dragValue: Double = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let span = max(range.upperBound - range.lowerBound, 0.0001)
+            let displayed = isDragging ? dragValue : value
+            let frac = max(0, min(1, (displayed - range.lowerBound) / span))
+            let trackHeight: CGFloat = 4
+            let thumbSize: CGFloat = 14
+            let usable = max(geo.size.width - thumbSize, 0)
+            let thumbX = usable * CGFloat(frac)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.15))
+                    .frame(height: trackHeight)
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: thumbX + thumbSize / 2, height: trackHeight)
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().stroke(Color.black.opacity(0.25), lineWidth: 0.5))
+                    .frame(width: thumbSize, height: thumbSize)
+                    .offset(x: thumbX)
+                    .shadow(color: .black.opacity(0.2), radius: 1, y: 0.5)
+            }
+            .frame(height: thumbSize)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let f = max(0, min(1, (g.location.x - thumbSize / 2) / max(usable, 1)))
+                        let v = range.lowerBound + Double(f) * span
+                        if !isDragging { isDragging = true }
+                        dragValue = v
+                        onSeek(v)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+        }
+        .frame(height: 14)
     }
 }
 
