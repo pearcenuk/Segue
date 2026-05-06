@@ -1671,7 +1671,6 @@ struct ContentView: View {
                 ToolbarItem(placement: .automatic) { settingsButton }
             }
             .onAppear {
-                vm.loadPersistedPlaylist()
                 vm.loadDefaults()
             }
             .sheet(isPresented: $showingCrossfadeEditor) {
