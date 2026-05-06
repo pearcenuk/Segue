@@ -2008,6 +2008,8 @@ struct ContentView: View {
             // Progress bar + time display
             VStack(spacing: 4) {
                 Slider(value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1))
+                    .animation(nil, value: vm.currentTime)
+                    .animation(nil, value: vm.effectiveEnd)
                 HStack {
                     Text(timeString(vm.currentTime))
                         .monospacedDigit()
