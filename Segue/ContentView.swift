@@ -2008,8 +2008,6 @@ struct ContentView: View {
             // Progress bar + time display
             VStack(spacing: 4) {
                 Slider(value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1))
-                    .animation(nil, value: vm.currentTime)
-                    .animation(nil, value: vm.effectiveEnd)
                 HStack {
                     Text(timeString(vm.currentTime))
                         .monospacedDigit()
@@ -2024,6 +2022,10 @@ struct ContentView: View {
                                 RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(0.5))
                             }
                         }
+                        .animation(flashBright
+                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                            : .easeOut(duration: 0.3),
+                                   value: flashBright)
                 }
                 .font(.body)
                 .foregroundStyle(.secondary)
@@ -2095,7 +2097,11 @@ struct ContentView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(flashBright ? Color.red : (vm.isPlaying ? Color.red.opacity(0.13) : Color.secondary.opacity(0.13)))
-                        .id(vm.currentIndex) // recreate on track change, killing any in-progress animation
+                        .id(vm.currentIndex)
+                        .animation(flashBright
+                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                            : .easeOut(duration: 0.3),
+                                   value: flashBright)
                 )
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.5) : Color.secondary.opacity(0.35), lineWidth: 1))
 
@@ -2182,13 +2188,7 @@ struct ContentView: View {
         .background(Color.primary.opacity(0.02))
         .onReceive(clockTimer) { date in currentDate = date }
         .onChange(of: vm.isNearingEnd) { nearing in
-            if nearing {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    flashBright = true
-                }
-            } else {
-                withAnimation(.easeOut(duration: 0.3)) { flashBright = false }
-            }
+            flashBright = nearing
         }
     }
 
