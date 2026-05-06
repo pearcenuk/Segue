@@ -2308,10 +2308,10 @@ private final class TrimPreviewState: ObservableObject {
 
     private var player: AVAudioPlayer?
     private var scopedURL: URL?
-    private var endTime: TimeInterval = 0
     private var timer: Timer?
 
-    func preview(url: URL, from start: TimeInterval, to end: TimeInterval, mode: Mode) {
+    /// Start playback from `start`. Plays until the track ends or `stop()` is called.
+    func preview(url: URL, from start: TimeInterval, mode: Mode) {
         stop()           // clears mode — set it afterwards
         self.mode = mode
         let accessing = url.startAccessingSecurityScopedResource()
@@ -2324,15 +2324,14 @@ private final class TrimPreviewState: ObservableObject {
         p.currentTime = start
         p.volume = 1.0
         p.play()
-        player   = p
-        endTime  = end
+        player      = p
         currentTime = start
         isPlaying   = true
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] t in
             guard let self, let p = self.player else { t.invalidate(); return }
             self.currentTime = p.currentTime
-            if p.currentTime >= self.endTime || !p.isPlaying { self.stop() }
+            if !p.isPlaying { self.stop() }
         }
     }
 
@@ -2431,28 +2430,24 @@ private struct TrimEditorView: View {
                     // Preview In
                     Button {
                         guard let url = trackURL else { return }
-                        preview.preview(url: url,
-                                        from: trimStart,
-                                        to: min(trimStart + previewWindow, trimEnd),
-                                        mode: .inPoint)
+                        preview.preview(url: url, from: trimStart, mode: .inPoint)
                     } label: {
                         Label("In point", systemImage: "arrow.right.to.line.compact")
                     }
                     .disabled(trackURL == nil || preview.isPlaying)
-                    .help("Play \(Int(previewWindow))s from the in point")
+                    .help("Play from the in point — press Stop or Set Point when done")
 
                     // Preview Out
                     Button {
                         guard let url = trackURL else { return }
                         preview.preview(url: url,
                                         from: max(trimStart, trimEnd - previewWindow),
-                                        to: trimEnd,
                                         mode: .outPoint)
                     } label: {
                         Label("Out point", systemImage: "arrow.left.to.line.compact")
                     }
                     .disabled(trackURL == nil || preview.isPlaying)
-                    .help("Play \(Int(previewWindow))s up to the out point")
+                    .help("Play from \(Int(previewWindow))s before the out point — press Set Point at the right moment")
 
                     // While playing: Stop + Set Here
                     if preview.isPlaying {
