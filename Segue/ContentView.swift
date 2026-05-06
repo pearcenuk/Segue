@@ -22,6 +22,7 @@ struct PauseItem: Identifiable, Equatable {
     let id = UUID()
     var bedBookmark: Data? = nil
     var bedURL: URL? = nil
+    var bedNormalizeGain: Float? = nil   // linear gain to reach -23 dBFS RMS; nil = not yet scanned
 
     var bedFilename: String? { bedURL?.deletingPathExtension().lastPathComponent }
 
@@ -270,6 +271,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var bedIsPlaying: Bool = false
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
+    private var currentBedTargetVolume: Float = 0.4   // normalised + scaled target for the active bed
 
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
@@ -642,6 +644,27 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         }
     }
 
+    private func scanBed(pauseID: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == pauseID }),
+              case .pause(let p) = items[idx],
+              let url = p.bedURL,
+              p.bedNormalizeGain == nil else { return }
+        let urlCopy = url
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+            let accessing = urlCopy.startAccessingSecurityScopedResource()
+            let gain = self.computeNormalizeGain(url: urlCopy)
+            if accessing { urlCopy.stopAccessingSecurityScopedResource() }
+            DispatchQueue.main.async {
+                guard let idx = self.items.firstIndex(where: { $0.id == pauseID }),
+                      case .pause(var p) = self.items[idx] else { return }
+                p.bedNormalizeGain = gain
+                self.items[idx] = .pause(p)
+                self.savePlaylist()
+            }
+        }
+    }
+
     private func computeNormalizeGain(url: URL) -> Float? {
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         let format = file.processingFormat
@@ -754,7 +777,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         p.play()
         bedPlayer = p
         bedIsPlaying = true
-        fade(p, to: defaultBedVolume, duration: 1.5)
+        // Normalise: bring bed to -23 dBFS, then scale by the bed-volume preference.
+        let normGain = pause.bedNormalizeGain.map { min(1.0, $0) } ?? 1.0
+        currentBedTargetVolume = min(1.0, normGain * defaultBedVolume)
+        fade(p, to: currentBedTargetVolume, duration: 1.5)
     }
 
     func stopBed(fadeDuration: TimeInterval = 1.5) {
@@ -777,7 +803,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             b.volume = 0
             b.play()
             bedIsPlaying = true
-            fade(b, to: defaultBedVolume, duration: 2.0)
+            fade(b, to: currentBedTargetVolume, duration: 2.0)
         }
     }
 
@@ -785,8 +811,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         guard items.indices.contains(index), case .pause(var p) = items[index] else { return }
         p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         p.bedURL = url
+        p.bedNormalizeGain = nil   // reset so the new file gets scanned
         items[index] = .pause(p)
         savePlaylist()
+        scanBed(pauseID: p.id)
     }
 
     func removeBed(at index: Int) {
@@ -900,6 +928,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                             p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                         }
                     }
+                    p.bedNormalizeGain = bundle.bedNormalizeGain
                     rebuilt.append(.pause(p))
                 case .track(let bundle):
                     let resolved = Track.from(bookmarkData: bundle.bookmark)
@@ -952,6 +981,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 return nil
             }
             if !unscanned.isEmpty { scanTracks(unscanned) }
+            let unscannedBeds = rebuilt.compactMap { item -> UUID? in
+                if case .pause(let p) = item, p.bedURL != nil, p.bedNormalizeGain == nil { return p.id }
+                return nil
+            }
+            unscannedBeds.forEach { scanBed(pauseID: $0) }
         } catch { print("Failed to load playlist: \(error)") }
     }
     
@@ -983,7 +1017,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func savePlaylist() {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path, bedNormalizeGain: p.bedNormalizeGain))
             case .track(let t):
                 if let bm = t.makeBookmark() ?? t.cachedBookmark {
                     return .track(BookmarkWithSettings(
@@ -1077,7 +1111,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func exportPlaylistData() -> Data? {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path, bedNormalizeGain: p.bedNormalizeGain))
             case .track(let t):
                 if let bm = t.makeBookmark() ?? t.cachedBookmark {
                     return .track(BookmarkWithSettings(
@@ -1120,6 +1154,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                     }
                 }
+                p.bedNormalizeGain = bundle.bedNormalizeGain
                 rebuilt.append(.pause(p))
             case .track(let bundle):
                 let resolved = Track.from(bookmarkData: bundle.bookmark)
@@ -1149,6 +1184,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         }
         self.items = rebuilt
         savePlaylist()
+        let unscannedBeds = rebuilt.compactMap { item -> UUID? in
+            if case .pause(let p) = item, p.bedURL != nil, p.bedNormalizeGain == nil { return p.id }
+            return nil
+        }
+        unscannedBeds.forEach { scanBed(pauseID: $0) }
     }
 
     struct BookmarkWithSettings: Codable {
@@ -1221,6 +1261,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     struct PausePersisted: Codable {
         var bedBookmark: Data?
         var bedPath: String?
+        var bedNormalizeGain: Float?   // optional → backward-compatible with old saves
     }
 
     enum PersistedItem: Codable {
