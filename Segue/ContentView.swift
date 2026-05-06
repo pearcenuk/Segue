@@ -424,7 +424,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.endScopedAccess()
             self.isPlaying = false
             if !keepIndex { self.currentIndex = nil }
-            self.stopTimeUpdates()
+            self.stopTimeUpdates(resetDisplay: true)
         }
     }
 
@@ -551,7 +551,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.altPlayer = nil
             self.endScopedAccess()
             self.isPlaying = false
-            self.stopTimeUpdates()
+            self.stopTimeUpdates(resetDisplay: true)
         }
     }
 
@@ -927,13 +927,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
         }
     }
-    private func stopTimeUpdates() {
+    private func stopTimeUpdates(resetDisplay: Bool = false) {
         timeLink?.invalidate()
         timeLink = nil
-        currentTime = 0
-        duration = 0
-        effectiveEnd = 0
-        currentTrimStart = 0
+        if resetDisplay {
+            currentTime = 0
+            duration = 0
+            effectiveEnd = 0
+            currentTrimStart = 0
+        }
         isNearingEnd = false
         meterLevels = [0, 0]
         meterPeaks = [0, 0]
