@@ -2001,7 +2001,11 @@ struct ContentView: View {
                         .monospacedDigit()
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(flashBright ? 0.5 : 0)))
+                        .background {
+                            if flashBright {
+                                RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(0.5))
+                            }
+                        }
                 }
                 .font(.body)
                 .foregroundStyle(.secondary)
@@ -2165,7 +2169,7 @@ struct ContentView: View {
                     flashBright = true
                 }
             } else {
-                flashBright = false
+                withAnimation(.easeOut(duration: 0.3)) { flashBright = false }
             }
         }
     }
