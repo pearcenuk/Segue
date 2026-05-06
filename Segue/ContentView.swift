@@ -1466,7 +1466,10 @@ struct ContentView: View {
             .padding(.vertical, 7)
             .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
             .contentShape(Rectangle())
+            .onTapGesture(count: 2) { onPlay() }
             .contextMenu {
+                Button("Jump to Pause", action: onPlay)
+                Divider()
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
                 if bedName != nil {
