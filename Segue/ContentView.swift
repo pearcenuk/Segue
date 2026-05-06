@@ -1471,9 +1471,11 @@ struct ContentView: View {
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.22) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
             .overlay(alignment: .leading) {
-                if let rgba = t.tagColor {
+                if isCurrent {
+                    Rectangle().fill(Color.red).frame(width: 4)
+                } else if let rgba = t.tagColor {
                     Rectangle().fill(Color(rgba)).frame(width: 3)
                 }
             }
@@ -1527,7 +1529,10 @@ struct ContentView: View {
                     .padding(.leading, 4)
             }
             .padding(.vertical, 7)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.22) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
+            .overlay(alignment: .leading) {
+                if isCurrent { Rectangle().fill(Color.red).frame(width: 4) }
+            }
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { onPlay() }
             .contextMenu {
