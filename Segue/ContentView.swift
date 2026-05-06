@@ -271,6 +271,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     @Published var bedIsPlaying: Bool = false
+    @Published var pauseEnteredAt: Date? = nil   // set when playback lands on a pause row
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
     private var currentBedTargetVolume: Float = 0.4   // normalised + scaled target for the active bed
@@ -364,6 +365,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         case .pause(let p):
             stopPlayback(keepIndex: true)
             startBed(for: p)
+            pauseEnteredAt = Date()
         case .track(let track):
             startPlayback(url: track.url)
         }
@@ -407,6 +409,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func stopPlayback(keepIndex: Bool = false) {
+        pauseEnteredAt = nil
         fade(to: 0.0, duration: 0.2) {
             self.player?.stop()
             self.player = nil
@@ -1329,6 +1332,7 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
                 if case .pause(let p) = items[nextIdx] {
                     stopPlayback(keepIndex: true)
                     startBed(for: p)
+                    pauseEnteredAt = Date()
                 } else {
                     play()
                 }
@@ -1851,6 +1855,10 @@ struct ContentView: View {
             .onDelete { offsets in vm.remove(atOffsets: offsets) }
         }
         .listStyle(.inset)
+        .onChange(of: vm.currentIndex) { idx in
+            guard let idx else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(idx, anchor: .top) }
+        }
         .onChange(of: dropTargetIndex) { idx in
             guard let idx = idx, !vm.items.isEmpty else { return }
             if idx <= 1 {
@@ -1982,6 +1990,11 @@ struct ContentView: View {
                                     .keyboardShortcut("b", modifiers: [])
                                 }
                             }
+                            if let entered = vm.pauseEnteredAt {
+                                Text("In break · " + timeString(currentDate.timeIntervalSince(entered)))
+                                    .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             Text("—")
                                 .font(.system(size: 28, weight: .bold))
@@ -2022,6 +2035,12 @@ struct ContentView: View {
                             .font(.system(size: 28, weight: .bold))
                             .lineLimit(3)
                             .foregroundStyle(nextItem.isPause ? .orange : .primary)
+                        if case .track(let t) = nextItem,
+                           let dur = t.effectiveDuration ?? t.durationSeconds {
+                            Text(timeString(dur))
+                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         Text("End of playlist")
                             .font(.system(size: 28, weight: .bold))
