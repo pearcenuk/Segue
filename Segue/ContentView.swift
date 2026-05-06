@@ -1842,7 +1842,7 @@ struct ContentView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
 
                     if remainingPlaylistDuration > 0 {
-                        let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
+                        let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration.rounded())
                         // Show Ends card — accent-tinted to signal it's a target
                         VStack(spacing: 3) {
                             Text("SHOW ENDS")
