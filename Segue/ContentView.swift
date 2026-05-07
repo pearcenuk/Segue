@@ -9,12 +9,7 @@ import SwiftUI
 import AVFoundation
 import Combine
 import UniformTypeIdentifiers
-
-#if os(iOS)
-import UIKit
-#elseif os(macOS)
 import AppKit
-#endif
 
 // MARK: - Models
 
@@ -113,21 +108,12 @@ extension Color {
 
 extension RGBAColor {
     init(_ color: Color) {
-        #if os(iOS)
-        let ui = UIColor(color)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        ui.getRed(&r, &g, &b, &a)
-        self.r = Double(r); self.g = Double(g); self.b = Double(b); self.a = Double(a)
-        #elseif os(macOS)
         let ns = NSColor(color)
         let c = ns.usingColorSpace(.sRGB) ?? ns
         self.r = Double(c.redComponent)
         self.g = Double(c.greenComponent)
         self.b = Double(c.blueComponent)
         self.a = Double(c.alphaComponent)
-        #else
-        self.r = 0; self.g = 0; self.b = 0; self.a = 0
-        #endif
     }
 }
 
@@ -185,28 +171,9 @@ enum CrossfadeCurve: String, Codable, CaseIterable {
     }
 }
 
-// MARK: - DisplayLink Protocol & Platform Specifics
+// MARK: - DisplayLink
 
-protocol CADisplayLinkLike {
-    func invalidate()
-}
-#if os(iOS) || os(tvOS) || os(visionOS)
-final class DisplayLinkBox: CADisplayLinkLike {
-    private var link: CADisplayLink?
-    init(_ callback: @escaping () -> Void) {
-        let l = CADisplayLink(target: BlockTarget(callback), selector: #selector(BlockTarget.fire))
-        l.add(to: .main, forMode: .common)
-        self.link = l
-    }
-    func invalidate() { link?.invalidate() }
-    private class BlockTarget: NSObject {
-        let cb: () -> Void
-        init(_ cb: @escaping () -> Void) { self.cb = cb }
-        @objc func fire() { cb() }
-    }
-}
-#else
-final class DisplayLinkBox: CADisplayLinkLike {
+final class DisplayLinkBox {
     private var timer: Timer?
     init(_ callback: @escaping () -> Void) {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { _ in callback() }
@@ -214,7 +181,6 @@ final class DisplayLinkBox: CADisplayLinkLike {
     }
     func invalidate() { timer?.invalidate() }
 }
-#endif
 
 // MARK: - View Model
 
@@ -282,7 +248,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
-    private var timeLink: CADisplayLinkLike?
+    private var timeLink: DisplayLinkBox?
 
     private var currentScopedURL: URL? = nil
     private var currentScopeActive: Bool = false
@@ -574,31 +540,19 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     private func beginScopedAccess(for url: URL) {
         endScopedAccess()
-        #if os(iOS) || os(macOS)
         currentScopedURL = url
         currentScopeActive = url.startAccessingSecurityScopedResource()
-        #endif
     }
 
     private func endScopedAccess() {
-        #if os(iOS) || os(macOS)
         if currentScopeActive, let u = currentScopedURL {
             u.stopAccessingSecurityScopedResource()
         }
         currentScopedURL = nil
         currentScopeActive = false
-        #endif
     }
 
     private func startPlayback(url: URL) {
-#if os(iOS) || os(tvOS) || os(visionOS)
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            // Non-fatal for macOS, required for iOS
-        }
-#endif
         beginScopedAccess(for: url)
         do {
             player = try AVAudioPlayer(contentsOf: url)
@@ -2910,13 +2864,7 @@ struct FilePickerBridge: View {
     let onPick: ([URL]) -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        #if os(iOS)
-        IOSPicker(allowedExtensions: allowedExtensions, onPick: { urls in onPick(urls); dismiss() })
-        #elseif os(macOS)
         MacPicker(allowedExtensions: allowedExtensions, onPick: { urls in onPick(urls); dismiss() })
-        #else
-        Text("Unsupported platform")
-        #endif
     }
 }
 
@@ -2924,13 +2872,7 @@ struct FileImportBridge: View {
     let onComplete: (Data?) -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        #if os(iOS)
-        IOSImport(onComplete: { data in onComplete(data); dismiss() })
-        #elseif os(macOS)
         MacImport(onComplete: { data in onComplete(data); dismiss() })
-        #else
-        Text("Unsupported platform")
-        #endif
     }
 }
 
@@ -2941,86 +2883,10 @@ struct FileExportBridge: View {
     let onComplete: () -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        #if os(iOS)
-        IOSExport(dataProvider: dataProvider, onComplete: { onComplete(); dismiss() })
-        #elseif os(macOS)
         MacExport(dataProvider: dataProvider, initialDirectory: initialDirectory, onDirectoryChosen: onDirectoryChosen, onComplete: { onComplete(); dismiss() })
-        #else
-        Text("Unsupported platform")
-        #endif
     }
 }
 
-#if os(iOS)
-import UniformTypeIdentifiers
-import MobileCoreServices
-
-struct IOSPicker: UIViewControllerRepresentable {
-    let allowedExtensions: [String]
-    let onPick: ([URL]) -> Void
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let types: [UTType] = [.audio]
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
-        picker.allowsMultipleSelection = true
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coord { Coord(onPick: onPick) }
-    final class Coord: NSObject, UIDocumentPickerDelegate {
-        let onPick: ([URL]) -> Void
-        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            onPick(urls)
-        }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick([]) }
-    }
-}
-
-struct IOSImport: UIViewControllerRepresentable {
-    let onComplete: (Data?) -> Void
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let types: [UTType] = [.json]
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coord { Coord(onComplete: onComplete) }
-    final class Coord: NSObject, UIDocumentPickerDelegate {
-        let onComplete: (Data?) -> Void
-        init(onComplete: @escaping (Data?) -> Void) { self.onComplete = onComplete }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { onComplete(nil); return }
-            let data = try? Data(contentsOf: url)
-            onComplete(data)
-        }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onComplete(nil) }
-    }
-}
-
-struct IOSExport: UIViewControllerRepresentable {
-    let dataProvider: () -> Data?
-    let onComplete: () -> Void
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let tempURL: URL
-        if let data = dataProvider() {
-            let dir = FileManager.default.temporaryDirectory
-            tempURL = dir.appendingPathComponent("playlist.json")
-            try? data.write(to: tempURL)
-        } else {
-            tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("empty.json")
-            try? Data().write(to: tempURL)
-        }
-        let vc = UIActivityViewController(activityItems: [tempURL], applicationActivities: nil)
-        vc.completionWithItemsHandler = { _, _, _, _ in onComplete() }
-        return vc
-    }
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
-
-#if os(macOS)
 struct MacPicker: NSViewControllerRepresentable {
     let allowedExtensions: [String]
     let onPick: ([URL]) -> Void
@@ -3107,7 +2973,6 @@ struct MacExport: NSViewControllerRepresentable {
     }
     func updateNSViewController(_ nsViewController: NSViewController, context: Context) {}
 }
-#endif
 
 #Preview {
     ContentView()
