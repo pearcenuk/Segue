@@ -334,19 +334,21 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func remove(atOffsets offsets: IndexSet) {
-        items.remove(atOffsets: offsets)
-        // Adjust current index if needed
-        if let current = currentIndex {
-            if items.indices.contains(current) == false { currentIndex = nil }
+        if let current = currentIndex, offsets.contains(current) {
+            stopPlayback()
+            stopBed(fadeDuration: 0.3)
         }
+        let currentID: UUID? = currentIndex.flatMap { offsets.contains($0) ? nil : items[$0].id }
+        items.remove(atOffsets: offsets)
+        currentIndex = currentID.flatMap { id in items.firstIndex(where: { $0.id == id }) }
         savePlaylist()
     }
 
     func move(from source: IndexSet, to destination: Int) {
+        let currentID = currentIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil }
         items.move(fromOffsets: source, toOffset: destination)
-        // Keep currentIndex aligned to the same item if possible
-        if let current = currentIndex, current < items.count {
-            // No-op: SwiftUI move keeps order; currentIndex still points to same position
+        if let id = currentID {
+            currentIndex = items.firstIndex(where: { $0.id == id })
         }
         savePlaylist()
     }
@@ -1867,8 +1869,8 @@ struct ContentView: View {
                     showingTrimEditor = true
                 }
             },
-            onRemove: { vm.items.remove(at: index); vm.savePlaylist() },
-            onRemovePause: { vm.items.remove(at: index); vm.savePlaylist() },
+            onRemove: { vm.remove(atOffsets: IndexSet([index])) },
+            onRemovePause: { vm.remove(atOffsets: IndexSet([index])) },
             onSetColor: { newColor in
                 if case .track(var t) = vm.items[index] {
                     t.tagColor = newColor
@@ -1933,9 +1935,14 @@ struct ContentView: View {
                 .allowsHitTesting(false)
             }
         }
+        .onAppear {
+            if let idx = vm.currentIndex {
+                proxy.scrollTo(idx, anchor: .center)
+            }
+        }
         .onChange(of: vm.currentIndex) { idx in
             guard let idx else { return }
-            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(idx, anchor: .top) }
+            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(idx, anchor: .center) }
         }
         .onChange(of: dropTargetIndex) { idx in
             guard let idx = idx, !vm.items.isEmpty else { return }
@@ -2446,9 +2453,13 @@ struct ContentView: View {
     private func moveItem(with id: UUID, to targetIndex: Int) {
         guard let fromIndex = vm.items.firstIndex(where: { $0.id == id }) else { return }
         if fromIndex == targetIndex { return }
+        let currentID = vm.currentIndex.flatMap { vm.items.indices.contains($0) ? vm.items[$0].id : nil }
         let item = vm.items.remove(at: fromIndex)
         let safeTarget = max(0, min(targetIndex, vm.items.count))
         vm.items.insert(item, at: safeTarget)
+        if let id = currentID {
+            vm.currentIndex = vm.items.firstIndex(where: { $0.id == id })
+        }
         vm.savePlaylist()
     }
 
