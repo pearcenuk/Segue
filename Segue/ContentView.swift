@@ -1521,16 +1521,17 @@ struct ContentView: View {
                 Spacer()
                 // Ramp badge
                 if let rd = t.rampDuration {
+                    let talkUp = max(0, rd - t.trimStart)
                     HStack(spacing: 3) {
                         Image(systemName: "timer").font(.caption2)
-                        Text(timeStringStatic(rd))
+                        Text(timeStringStatic(talkUp))
                             .font(.system(size: 12).monospacedDigit())
                     }
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.orange.opacity(0.2)))
                     .foregroundStyle(Color.orange)
-                    .help("Ramp ends at \(timeStringStatic(rd)) in track")
+                    .help("Ramp: \(timeStringStatic(talkUp)) from in point")
                 }
                 // Trim badge
                 if isTrimmed {
@@ -2877,9 +2878,9 @@ private struct TrackEditorView: View {
                         if rampEnabled {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text("Ramp ends at")
+                                    Text("Talk-up from in point")
                                     Spacer()
-                                    Text(fmtTime(rampDuration))
+                                    Text(fmtTime(max(0, rampDuration - trimStart)))
                                         .font(.system(.callout, design: .monospaced))
                                         .foregroundStyle(Color.orange)
                                 }
@@ -2887,11 +2888,6 @@ private struct TrackEditorView: View {
                                 let hi = max(lo + 0.5, trimEnd - 0.5)
                                 Slider(value: $rampDuration, in: lo...hi, step: 0.5)
                                     .tint(.orange)
-                                if rampDuration > trimStart {
-                                    Text("Talk-up: \(fmtTime(rampDuration - trimStart)) from in point")
-                                        .font(.caption2)
-                                        .foregroundStyle(Color.orange.opacity(0.8))
-                                }
                             }
                             Text("ON AIR counts down to this point in the track. Moving the in point does not shift the ramp.")
                                 .font(.caption)
