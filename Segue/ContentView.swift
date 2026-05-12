@@ -946,10 +946,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             let remaining = max(0, self.effectiveEnd - self.currentTime)
             self.isNearingEnd = remaining > 0 && remaining <= self.nearingEndThreshold
 
-            // Ramp timer countdown: counts down to trimStart + rampDuration
+            // Ramp timer countdown: counts down to absolute rampDuration position in file
             if let idx = self.currentIndex, case .track(let t) = self.items[idx], let rd = t.rampDuration {
-                let rampEndTime = t.trimStart + rd
-                let rampRemaining = rampEndTime - self.currentTime
+                let rampRemaining = rd - self.currentTime
                 self.rampCountdown = rampRemaining > 0 ? rampRemaining : nil
             } else {
                 self.rampCountdown = nil
@@ -1531,7 +1530,7 @@ struct ContentView: View {
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.orange.opacity(0.2)))
                     .foregroundStyle(Color.orange)
-                    .help("Ramp timer: \(timeStringStatic(rd)) talk-up from in point")
+                    .help("Ramp ends at \(timeStringStatic(rd)) in track")
                 }
                 // Trim badge
                 if isTrimmed {
@@ -1896,7 +1895,7 @@ struct ContentView: View {
                     pendingTrimStart = t.trimStart
                     pendingTrimEnd = t.trimEnd ?? dur
                     pendingRampEnabled = t.rampDuration != nil
-                    pendingRampDuration = t.rampDuration ?? 30.0
+                    pendingRampDuration = t.rampDuration ?? (t.trimStart + 30.0)
                     pendingCrossfadeEnabled = t.crossfadeEnabled
                     pendingCrossfadeDuration = t.crossfadeDuration
                     trackEditorURL = t.url
@@ -2574,7 +2573,7 @@ private struct WaveformTrimView: View {
             let inX   = CGFloat(trimStart / max(duration, 1)) * w
             let outX  = CGFloat(trimEnd   / max(duration, 1)) * w
             let rampX = rampEnabled
-                ? CGFloat((trimStart + rampDuration) / max(duration, 1)) * w
+                ? CGFloat(rampDuration / max(duration, 1)) * w
                 : inX
 
             Canvas { ctx, size in
@@ -2696,9 +2695,8 @@ private struct WaveformTrimView: View {
                         case .outPoint:
                             trimEnd = min(duration, max(t, trimStart + 0.5))
                         case .rampEnd:
-                            // rampDuration is measured from trimStart
-                            let newRampEnd = max(trimStart + 0.5, min(t, trimEnd - 0.5))
-                            rampDuration = newRampEnd - trimStart
+                            // rampDuration is absolute file position — clamp within active region
+                            rampDuration = max(trimStart + 0.5, min(t, trimEnd - 0.5))
                         }
                     }
                     .onEnded { _ in dragTarget = nil }
@@ -2826,9 +2824,7 @@ private struct TrackEditorView: View {
                                    step: 0.5)
                             .onChange(of: trimStart) { v in
                                 if trimEnd <= v { trimEnd = min(v + 1, duration) }
-                                if rampEnabled && (trimStart + rampDuration) > trimEnd {
-                                    rampDuration = max(0.5, trimEnd - trimStart - 0.5)
-                                }
+                                // rampDuration is absolute — does not move with trimStart
                                 preview.stop()
                             }
                         }
@@ -2881,19 +2877,23 @@ private struct TrackEditorView: View {
                         if rampEnabled {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text("Talk-up duration")
+                                    Text("Ramp ends at")
                                     Spacer()
                                     Text(fmtTime(rampDuration))
                                         .font(.system(.callout, design: .monospaced))
                                         .foregroundStyle(Color.orange)
                                 }
-                                let maxRamp = max(0.5, (trimEnd - trimStart) - 0.5)
-                                Slider(value: $rampDuration,
-                                       in: 0.5...max(0.5, maxRamp),
-                                       step: 0.5)
-                                .tint(.orange)
+                                let lo = max(0.5, trimStart + 0.5)
+                                let hi = max(lo + 0.5, trimEnd - 0.5)
+                                Slider(value: $rampDuration, in: lo...hi, step: 0.5)
+                                    .tint(.orange)
+                                if rampDuration > trimStart {
+                                    Text("Talk-up: \(fmtTime(rampDuration - trimStart)) from in point")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.orange.opacity(0.8))
+                                }
                             }
-                            Text("The ON AIR panel counts down from this time after the in point. Use it to time your talk-up so you finish exactly as the music hits.")
+                            Text("ON AIR counts down to this point in the track. Moving the in point does not shift the ramp.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
