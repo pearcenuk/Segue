@@ -1533,6 +1533,16 @@ struct ContentView: View {
                     .foregroundStyle(Color.orange)
                     .help("Ramp timer: \(timeStringStatic(rd)) talk-up from in point")
                 }
+                // Trim badge
+                if isTrimmed {
+                    Image(systemName: "scissors")
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.2)))
+                        .foregroundStyle(Color.orange)
+                        .help("Track is trimmed")
+                }
                 // CF badge
                 if t.crossfadeEnabled {
                     Text("CF")
@@ -1545,13 +1555,10 @@ struct ContentView: View {
                 }
                 // Duration — always far right before drag handle
                 if let d = displayDuration {
-                    HStack(spacing: 3) {
-                        if isTrimmed { Image(systemName: "scissors").font(.caption2) }
-                        Text(timeStringStatic(d))
-                            .font(.system(size: 14).monospacedDigit())
-                            .frame(minWidth: 50, alignment: .trailing)
-                    }
-                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
+                    Text(timeStringStatic(d))
+                        .font(.system(size: 14).monospacedDigit())
+                        .frame(minWidth: 50, alignment: .trailing)
+                        .foregroundStyle(Color.primary.opacity(0.55))
                 }
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
