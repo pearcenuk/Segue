@@ -1520,16 +1520,6 @@ struct ContentView: View {
                     .truncationMode(.tail)
                     .foregroundStyle(t.tagColor.map { Color($0) } ?? Color.primary)
                 Spacer()
-                // Duration with optional trim indicator
-                if let d = displayDuration {
-                    HStack(spacing: 3) {
-                        if isTrimmed { Image(systemName: "scissors").font(.caption2) }
-                        Text(timeStringStatic(d))
-                            .font(.system(size: 14).monospacedDigit())
-                            .frame(minWidth: 50, alignment: .trailing)
-                    }
-                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
-                }
                 // Ramp badge
                 if let rd = t.rampDuration {
                     HStack(spacing: 3) {
@@ -1564,6 +1554,16 @@ struct ContentView: View {
                         .background(Capsule().fill(Color.green.opacity(gain < 1.0 ? 0.22 : 0.14)))
                         .foregroundStyle(Color.green)
                         .help("Normalization: \(label) dB applied to reach −23 dBFS")
+                }
+                // Duration — always far right before drag handle
+                if let d = displayDuration {
+                    HStack(spacing: 3) {
+                        if isTrimmed { Image(systemName: "scissors").font(.caption2) }
+                        Text(timeStringStatic(d))
+                            .font(.system(size: 14).monospacedDigit())
+                            .frame(minWidth: 50, alignment: .trailing)
+                    }
+                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
                 }
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
