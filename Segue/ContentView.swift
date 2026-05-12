@@ -64,6 +64,7 @@ struct Track: Identifiable, Equatable {
     var isMissing: Bool = false
     var normalizeGain: Float? = nil  // linear gain to reach -23 dBFS RMS target; nil = not yet scanned
     var cachedBookmark: Data? = nil  // last known-good bookmark; used as fallback when volume is unreachable
+    var rampDuration: TimeInterval? = nil  // how long from trimStart the presenter should talk; nil = no ramp timer
 
     var effectiveDuration: TimeInterval? {
         guard let d = durationSeconds else { return nil }
@@ -196,7 +197,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var effectiveEnd: TimeInterval = 0
     @Published var currentTrimStart: TimeInterval = 0
     @Published var isNearingEnd: Bool = false
-    
+    @Published var rampCountdown: TimeInterval? = nil
+
     @Published var defaultCrossfadeEnabled: Bool = false
     @Published var defaultCrossfadeDuration: TimeInterval = 1.0
     @Published var playedTrackIDs: Set<UUID> = []
@@ -877,6 +879,24 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         savePlaylist()
     }
 
+    /// Single-undo save for the combined Track Editor (trim + ramp + crossfade).
+    func applyTrackEdit(at index: Int,
+                        trimStart: TimeInterval, trimEnd: TimeInterval?,
+                        rampDuration: TimeInterval?,
+                        crossfadeEnabled: Bool, crossfadeDuration: TimeInterval) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Edit Track")
+        t.trimStart = trimStart
+        t.trimEnd = trimEnd
+        t.rampDuration = rampDuration
+        t.crossfadeEnabled = crossfadeEnabled
+        t.usesDefaultCrossfadeEnabled = false
+        t.crossfadeDuration = crossfadeDuration
+        t.usesDefaultCrossfadeDuration = false
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
     func moveItem(with id: UUID, to targetIndex: Int) {
         guard let fromIndex = items.firstIndex(where: { $0.id == id }), fromIndex != targetIndex else { return }
         registerUndo(named: "Move Item")
@@ -926,6 +946,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             let remaining = max(0, self.effectiveEnd - self.currentTime)
             self.isNearingEnd = remaining > 0 && remaining <= self.nearingEndThreshold
 
+            // Ramp timer countdown: counts down to trimStart + rampDuration
+            if let idx = self.currentIndex, case .track(let t) = self.items[idx], let rd = t.rampDuration {
+                let rampEndTime = t.trimStart + rd
+                let rampRemaining = rampEndTime - self.currentTime
+                self.rampCountdown = rampRemaining > 0 ? rampRemaining : nil
+            } else {
+                self.rampCountdown = nil
+            }
+
             // Early-out: trim end reached
             if let idx = self.currentIndex, case .track(let t) = self.items[idx], let trimEnd = t.trimEnd {
                 if self.currentTime >= trimEnd && !self.isCrossfading {
@@ -962,6 +991,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             currentTrimStart = 0
         }
         isNearingEnd = false
+        rampCountdown = nil
         meterLevels = [0, 0]
         meterPeaks = [0, 0]
         peakHoldCounters = [0, 0]
@@ -1019,6 +1049,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         t.trimStart = bundle.trimStart
                         t.trimEnd = bundle.trimEnd
                         t.normalizeGain = bundle.normalizeGain
+                        t.rampDuration = bundle.rampDuration
                         let accessing = t.url.startAccessingSecurityScopedResource()
                         t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                         if accessing { t.url.stopAccessingSecurityScopedResource() }
@@ -1094,7 +1125,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         durationSeconds: t.durationSeconds,
                         trimStart: t.trimStart,
                         trimEnd: t.trimEnd,
-                        normalizeGain: t.normalizeGain
+                        normalizeGain: t.normalizeGain,
+                        rampDuration: t.rampDuration
                     ))
                 } else { return nil }
             }
@@ -1193,7 +1225,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         durationSeconds: t.durationSeconds,
                         trimStart: t.trimStart,
                         trimEnd: t.trimEnd,
-                        normalizeGain: t.normalizeGain
+                        normalizeGain: t.normalizeGain,
+                        rampDuration: t.rampDuration
                     ))
                 } else { return nil }
             }
@@ -1245,6 +1278,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     t.trimStart = bundle.trimStart
                     t.trimEnd = bundle.trimEnd
                     t.normalizeGain = bundle.normalizeGain
+                    t.rampDuration = bundle.rampDuration
                     t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                     rebuilt.append(.track(t))
                 }
@@ -1271,8 +1305,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         let trimStart: TimeInterval
         let trimEnd: TimeInterval?
         let normalizeGain: Float?
+        let rampDuration: TimeInterval?
 
-        init(bookmark: Data, filePath: String? = nil, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil, normalizeGain: Float? = nil) {
+        init(bookmark: Data, filePath: String? = nil, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval,
+             usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool,
+             tagColor: RGBAColor?, durationSeconds: TimeInterval?,
+             trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil,
+             normalizeGain: Float? = nil, rampDuration: TimeInterval? = nil) {
             self.bookmark = bookmark
             self.filePath = filePath
             self.crossfadeEnabled = crossfadeEnabled
@@ -1284,6 +1323,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.trimStart = trimStart
             self.trimEnd = trimEnd
             self.normalizeGain = normalizeGain
+            self.rampDuration = rampDuration
         }
 
         init(from decoder: Decoder) throws {
@@ -1299,6 +1339,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             trimStart = (try? c.decode(TimeInterval.self, forKey: .trimStart)) ?? 0
             trimEnd = try? c.decode(TimeInterval.self, forKey: .trimEnd)
             normalizeGain = try? c.decode(Float.self, forKey: .normalizeGain)
+            rampDuration = try? c.decode(TimeInterval.self, forKey: .rampDuration)
         }
     }
     
@@ -1404,17 +1445,18 @@ struct ContentView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var draggingItemID: UUID? = nil
 
-    @State private var showingCrossfadeEditor = false
-    @State private var editingCrossfadeIndex: Int? = nil
-    @State private var pendingCrossfadeDuration: Double = 1.0
-
-    @State private var showingTrimEditor = false
-    @State private var editingTrimIndex: Int? = nil
+    // Combined track editor (trim + ramp + crossfade)
+    @State private var showingTrackEditor = false
+    @State private var editingTrackIndex: Int? = nil
     @State private var pendingTrimStart: Double = 0
     @State private var pendingTrimEnd: Double = 0
-    @State private var trimEditorDuration: Double = 60
-    @State private var trimEditorURL: URL? = nil
-    @State private var trimEditorTitle: String = ""
+    @State private var pendingRampEnabled: Bool = false
+    @State private var pendingRampDuration: Double = 30.0
+    @State private var pendingCrossfadeEnabled: Bool = false
+    @State private var pendingCrossfadeDuration: Double = 1.0
+    @State private var trackEditorDuration: Double = 60
+    @State private var trackEditorURL: URL? = nil
+    @State private var trackEditorTitle: String = ""
 
     @State private var dropTargetIndex: Int? = nil
     @State private var isFinderDropTargeted = false
@@ -1432,15 +1474,13 @@ struct ContentView: View {
         let onInsertPauseBefore: () -> Void
         let onInsertPauseAfter: () -> Void
         let onToggleCrossfade: () -> Void
-        let onEditCrossfade: () -> Void
-        let onEditTrim: () -> Void
+        let onEditTrack: () -> Void
         let onRemove: () -> Void
         let onRemovePause: () -> Void
         let onSetColor: (RGBAColor?) -> Void
         let bedName: String?
         let onAssignBed: () -> Void
         let onRemoveBed: () -> Void
-        let isPlaylistPlaying: Bool
 
         var body: some View {
             if item.isPause {
@@ -1536,9 +1576,7 @@ struct ContentView: View {
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
                 Button(t.crossfadeEnabled ? "Disable Fade-out to Next" : "Fade Out into Next Track", action: onToggleCrossfade)
-                Button("Set Fade-out Duration…", action: onEditCrossfade)
-                Button("Set Trim Points…", action: onEditTrim)
-                    .disabled(isPlaylistPlaying)
+                Button("Edit Track…", action: onEditTrack)
                 Menu("Tag Color") {
                     Button("Red") { onSetColor(RGBAColor(Color.red)) }
                     Button("Orange") { onSetColor(RGBAColor(Color.orange)) }
@@ -1697,48 +1735,31 @@ struct ContentView: View {
                 vm.setUndoManager(undoManager)
                 vm.loadDefaults()
             }
-            .sheet(isPresented: $showingCrossfadeEditor) {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Fade-out Duration")
-                        .font(.headline)
-                    HStack {
-                        Slider(value: $pendingCrossfadeDuration, in: 0...10, step: 0.1)
-                        Text(String(format: "%.1fs", pendingCrossfadeDuration))
-                            .frame(width: 60, alignment: .trailing)
-                    }
-                    HStack {
-                        Spacer()
-                        Button("Cancel") { showingCrossfadeEditor = false }
-                        Button("Save") {
-                            if let i = editingCrossfadeIndex {
-                                vm.setCrossfadeDuration(pendingCrossfadeDuration, at: i)
-                            }
-                            showingCrossfadeEditor = false
-                        }
-                        .keyboardShortcut(.defaultAction)
-                    }
-                }
-                .padding()
-                .frame(minWidth: 320)
-            }
-            .sheet(isPresented: $showingTrimEditor) {
-                TrimEditorView(
-                    trackTitle: trimEditorTitle,
-                    trackURL: trimEditorURL,
+            .sheet(isPresented: $showingTrackEditor) {
+                TrackEditorView(
+                    trackTitle: trackEditorTitle,
+                    trackURL: trackEditorURL,
                     trimStart: $pendingTrimStart,
                     trimEnd: $pendingTrimEnd,
-                    duration: trimEditorDuration,
+                    rampEnabled: $pendingRampEnabled,
+                    rampDuration: $pendingRampDuration,
+                    crossfadeEnabled: $pendingCrossfadeEnabled,
+                    crossfadeDuration: $pendingCrossfadeDuration,
+                    duration: trackEditorDuration,
                     onSave: {
-                        if let i = editingTrimIndex {
-                            vm.setTrim(
-                                start: pendingTrimStart,
-                                end: pendingTrimEnd < trimEditorDuration ? pendingTrimEnd : nil,
-                                at: i
+                        if let i = editingTrackIndex {
+                            vm.applyTrackEdit(
+                                at: i,
+                                trimStart: pendingTrimStart,
+                                trimEnd: pendingTrimEnd < trackEditorDuration ? pendingTrimEnd : nil,
+                                rampDuration: pendingRampEnabled ? pendingRampDuration : nil,
+                                crossfadeEnabled: pendingCrossfadeEnabled,
+                                crossfadeDuration: pendingCrossfadeDuration
                             )
                         }
-                        showingTrimEditor = false
+                        showingTrackEditor = false
                     },
-                    onCancel: { showingTrimEditor = false }
+                    onCancel: { showingTrackEditor = false }
                 )
             }
             .sheet(isPresented: $vm.showingSettings) {
@@ -1861,23 +1882,20 @@ struct ContentView: View {
             onInsertPauseBefore: { vm.addPause(at: index) },
             onInsertPauseAfter: { vm.addPause(at: index + 1) },
             onToggleCrossfade: { vm.toggleCrossfade(at: index) },
-            onEditCrossfade: {
+            onEditTrack: {
                 if case .track(let t) = vm.items[index] {
-                    editingCrossfadeIndex = index
-                    pendingCrossfadeDuration = t.crossfadeDuration
-                    showingCrossfadeEditor = true
-                }
-            },
-            onEditTrim: {
-                if case .track(let t) = vm.items[index] {
-                    editingTrimIndex = index
-                    pendingTrimStart = t.trimStart
+                    editingTrackIndex = index
                     let dur = t.durationSeconds ?? 60
-                    trimEditorDuration = dur
+                    trackEditorDuration = dur
+                    pendingTrimStart = t.trimStart
                     pendingTrimEnd = t.trimEnd ?? dur
-                    trimEditorURL = t.url
-                    trimEditorTitle = t.title
-                    showingTrimEditor = true
+                    pendingRampEnabled = t.rampDuration != nil
+                    pendingRampDuration = t.rampDuration ?? 30.0
+                    pendingCrossfadeEnabled = t.crossfadeEnabled
+                    pendingCrossfadeDuration = t.crossfadeDuration
+                    trackEditorURL = t.url
+                    trackEditorTitle = t.title
+                    showingTrackEditor = true
                 }
             },
             onRemove: { vm.remove(atOffsets: IndexSet([index])) },
@@ -1885,8 +1903,7 @@ struct ContentView: View {
             onSetColor: { vm.setTagColor($0, at: index) },
             bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
             onAssignBed: { openBedPicker(for: index) },
-            onRemoveBed: { vm.removeBed(at: index) },
-            isPlaylistPlaying: vm.isPlaying
+            onRemoveBed: { vm.removeBed(at: index) }
         )
         .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
         .onDrop(of: [UTType.text, UTType.fileURL],
@@ -2074,6 +2091,17 @@ struct ContentView: View {
                                 .font(.system(size: 28, weight: .bold))
                                 .lineLimit(3)
                                 .foregroundStyle(vm.isNearingEnd ? Color.white : Color.primary)
+                            if let countdown = vm.rampCountdown {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "timer")
+                                    Text("RAMP")
+                                        .font(.system(size: 12, weight: .heavy))
+                                        .kerning(1.5)
+                                    Text(timeString(countdown))
+                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                }
+                                .foregroundStyle(countdown <= 5 ? Color.red : Color.orange)
+                            }
                             if case .pause(let p) = vm.items[idx], let bedName = p.bedFilename {
                                 HStack(spacing: 8) {
                                     Text(bedName)
@@ -2525,18 +2553,23 @@ private struct WaveformTrimView: View {
     let duration: Double
     @Binding var trimStart: Double
     @Binding var trimEnd: Double
+    let rampEnabled: Bool
+    @Binding var rampDuration: Double
     let samples: [Float]
     let previewTime: TimeInterval?
 
     @State private var dragTarget: DragTarget? = nil
-    private enum DragTarget { case inPoint, outPoint }
+    private enum DragTarget { case inPoint, outPoint, rampEnd }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let inX  = CGFloat(trimStart / max(duration, 1)) * w
-            let outX = CGFloat(trimEnd   / max(duration, 1)) * w
+            let inX   = CGFloat(trimStart / max(duration, 1)) * w
+            let outX  = CGFloat(trimEnd   / max(duration, 1)) * w
+            let rampX = rampEnabled
+                ? CGFloat((trimStart + rampDuration) / max(duration, 1)) * w
+                : inX
 
             Canvas { ctx, size in
                 // Background
@@ -2550,7 +2583,8 @@ private struct WaveformTrimView: View {
                         let x  = CGFloat(i) * barW
                         let bh = max(1, CGFloat(s) * size.height * 0.85)
                         let y  = (size.height - bh) / 2
-                        let active = (x + barW * 0.5) >= inX && (x + barW * 0.5) <= outX
+                        let mid = x + barW * 0.5
+                        let active = mid >= inX && mid <= outX
                         ctx.fill(
                             Path(CGRect(x: x, y: y, width: max(1, barW - 0.5), height: bh)),
                             with: .color(active ? Color.accentColor : Color.secondary.opacity(0.2))
@@ -2564,9 +2598,39 @@ private struct WaveformTrimView: View {
                              with: .color(Color.accentColor.opacity(0.1)))
                 }
 
+                // Ramp zone tint (from in-point to ramp end)
+                if rampEnabled && rampX > inX && rampX <= outX {
+                    ctx.fill(Path(CGRect(x: inX, y: 0, width: rampX - inX, height: size.height)),
+                             with: .color(Color.orange.opacity(0.12)))
+                }
+
                 // In-point and out-point handles
                 ctx.fill(Path(CGRect(x: max(0, inX - 1.5),  y: 0, width: 3, height: size.height)), with: .color(.green))
                 ctx.fill(Path(CGRect(x: max(0, outX - 1.5), y: 0, width: 3, height: size.height)), with: .color(.red))
+
+                // Ramp end marker (orange dashed line, top half only)
+                if rampEnabled && rampX > inX && rampX <= outX {
+                    let rampPath: Path = {
+                        var p = Path()
+                        let segH: CGFloat = 6
+                        var y: CGFloat = 0
+                        while y < size.height {
+                            p.addRect(CGRect(x: rampX - 1, y: y, width: 2, height: min(segH, size.height - y)))
+                            y += segH * 2
+                        }
+                        return p
+                    }()
+                    ctx.fill(rampPath, with: .color(Color.orange.opacity(0.9)))
+
+                    // Ramp label
+                    ctx.draw(
+                        Text("RAMP")
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(Color.orange),
+                        at: CGPoint(x: rampX + 4, y: 6),
+                        anchor: .topLeading
+                    )
+                }
 
                 // Playhead
                 if let t = previewTime, duration > 0 {
@@ -2575,7 +2639,7 @@ private struct WaveformTrimView: View {
                              with: .color(Color.white.opacity(0.85)))
                 }
 
-                // Time labels
+                // Time labels — in point
                 ctx.draw(
                     Text(mmss(trimStart))
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -2583,6 +2647,7 @@ private struct WaveformTrimView: View {
                     at: CGPoint(x: inX + 5, y: size.height - 5),
                     anchor: .bottomLeading
                 )
+                // Out point
                 ctx.draw(
                     Text(mmss(trimEnd))
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -2609,12 +2674,25 @@ private struct WaveformTrimView: View {
                     .onChanged { val in
                         let t = Double(val.location.x / max(w, 1)) * duration
                         if dragTarget == nil {
-                            dragTarget = abs(val.location.x - inX) <= abs(val.location.x - outX)
-                                ? .inPoint : .outPoint
+                            // Determine closest handle to pick
+                            let dIn  = abs(val.location.x - inX)
+                            let dOut = abs(val.location.x - outX)
+                            let dRamp = rampEnabled ? abs(val.location.x - rampX) : CGFloat.infinity
+                            if rampEnabled && dRamp < dIn && dRamp < dOut {
+                                dragTarget = .rampEnd
+                            } else {
+                                dragTarget = dIn <= dOut ? .inPoint : .outPoint
+                            }
                         }
                         switch dragTarget! {
-                        case .inPoint:  trimStart = max(0,        min(t, trimEnd - 0.5))
-                        case .outPoint: trimEnd   = min(duration, max(t, trimStart + 0.5))
+                        case .inPoint:
+                            trimStart = max(0, min(t, trimEnd - 0.5))
+                        case .outPoint:
+                            trimEnd = min(duration, max(t, trimStart + 0.5))
+                        case .rampEnd:
+                            // rampDuration is measured from trimStart
+                            let newRampEnd = max(trimStart + 0.5, min(t, trimEnd - 0.5))
+                            rampDuration = newRampEnd - trimStart
                         }
                     }
                     .onEnded { _ in dragTarget = nil }
@@ -2677,11 +2755,17 @@ private final class TrimPreviewState: ObservableObject {
     deinit { stop() }
 }
 
-private struct TrimEditorView: View {
+// MARK: - Track Editor (combined trim + ramp + crossfade, Option B layout)
+
+private struct TrackEditorView: View {
     let trackTitle: String
     let trackURL: URL?
     @Binding var trimStart: Double
     @Binding var trimEnd: Double
+    @Binding var rampEnabled: Bool
+    @Binding var rampDuration: Double
+    @Binding var crossfadeEnabled: Bool
+    @Binding var crossfadeDuration: Double
     let duration: Double
     let onSave: () -> Void
     let onCancel: () -> Void
@@ -2692,103 +2776,215 @@ private struct TrimEditorView: View {
     private let previewWindow: TimeInterval = 10
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
 
             // ── Header ────────────────────────────────────────────────
             VStack(alignment: .leading, spacing: 3) {
-                Text("Trim Track").font(.title3).bold()
+                Text("Edit Track").font(.title3).bold()
                 Text(trackTitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .padding([.horizontal, .top], 18)
+            .padding(.bottom, 12)
 
             Divider()
 
-            // ── In point slider ───────────────────────────────────────
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("In point").fontWeight(.medium)
-                    Text("— skip this much from the start")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(fmtTime(trimStart))
-                        .monospacedDigit().foregroundStyle(.secondary)
-                }
-                Slider(value: $trimStart,
-                       in: 0...max(duration - 1, 1),
-                       step: 0.5)
-                .onChange(of: trimStart) { v in
-                    if trimEnd <= v { trimEnd = min(v + 1, duration) }
-                    preview.stop()
-                }
-            }
+            // ── Two-column body ───────────────────────────────────────
+            HStack(alignment: .top, spacing: 0) {
 
-            // ── Out point slider ──────────────────────────────────────
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Out point").fontWeight(.medium)
-                    Text("— stop early here")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(fmtTime(trimEnd))
-                        .monospacedDigit().foregroundStyle(.secondary)
-                }
-                Slider(value: $trimEnd,
-                       in: max(trimStart + 1, 1)...max(duration, trimStart + 2),
-                       step: 0.5)
-                .onChange(of: trimEnd) { _ in preview.stop() }
-            }
+                // Left column: Trim + Ramp
+                VStack(alignment: .leading, spacing: 14) {
 
-            Text("Effective duration: \(fmtTime(max(0, trimEnd - trimStart)))")
-                .font(.callout).foregroundStyle(.secondary)
+                    // ── TRIM ──────────────────────────────────────────
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Trim", systemImage: "scissors")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        // In point
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("In point")
+                                Text("— skip from start")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Text(fmtTime(trimStart))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $trimStart,
+                                   in: 0...max(duration - 1, 1),
+                                   step: 0.5)
+                            .onChange(of: trimStart) { v in
+                                if trimEnd <= v { trimEnd = min(v + 1, duration) }
+                                if rampEnabled && (trimStart + rampDuration) > trimEnd {
+                                    rampDuration = max(0.5, trimEnd - trimStart - 0.5)
+                                }
+                                preview.stop()
+                            }
+                        }
+
+                        // Out point
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Out point")
+                                Text("— stop early")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Text(fmtTime(trimEnd))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $trimEnd,
+                                   in: max(trimStart + 1, 1)...max(duration, trimStart + 2),
+                                   step: 0.5)
+                            .onChange(of: trimEnd) { _ in preview.stop() }
+                        }
+
+                        HStack {
+                            Text("Effective duration:")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(fmtTime(max(0, trimEnd - trimStart)))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Clear") {
+                                trimStart = 0
+                                trimEnd = duration
+                                preview.stop()
+                            }
+                            .font(.caption)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    // ── RAMP TIMER ────────────────────────────────────
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Ramp Timer", systemImage: "timer")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Enable ramp timer", isOn: $rampEnabled)
+
+                        if rampEnabled {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Talk-up duration")
+                                    Spacer()
+                                    Text(fmtTime(rampDuration))
+                                        .font(.system(.callout, design: .monospaced))
+                                        .foregroundStyle(Color.orange)
+                                }
+                                let maxRamp = max(0.5, (trimEnd - trimStart) - 0.5)
+                                Slider(value: $rampDuration,
+                                       in: 0.5...max(0.5, maxRamp),
+                                       step: 0.5)
+                                .tint(.orange)
+                            }
+                            Text("The ON AIR panel counts down from this time after the in point. Use it to time your talk-up so you finish exactly as the music hits.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("Set a countdown so you know when to stop talking and let the music run.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                Divider()
+                    .frame(maxHeight: .infinity)
+
+                // Right column: Crossfade
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Crossfade", systemImage: "waveform.path")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Fade out into next track", isOn: $crossfadeEnabled)
+
+                    if crossfadeEnabled {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Fade duration")
+                                Spacer()
+                                Text(String(format: "%.1fs", crossfadeDuration))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $crossfadeDuration, in: 0.1...15, step: 0.1)
+                        }
+                        Text("The outgoing track fades out over this duration while the next track fades in. The fade begins automatically near the end.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("When enabled, this track automatically crossfades into the next one when it nears its end.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
+                .frame(width: 240, alignment: .topLeading)
+            }
+            .frame(minHeight: 240)
 
             Divider()
 
-            // ── Visual timeline + preview ─────────────────────────────
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Preview").font(.subheadline).fontWeight(.medium)
-
+            // ── Full-width waveform ───────────────────────────────────
+            VStack(alignment: .leading, spacing: 8) {
                 WaveformTrimView(
                     duration: duration,
                     trimStart: $trimStart,
                     trimEnd: $trimEnd,
+                    rampEnabled: rampEnabled,
+                    rampDuration: $rampDuration,
                     samples: waveform.samples,
                     previewTime: preview.isPlaying ? preview.currentTime : nil
                 )
                 .frame(height: 80)
 
-                HStack(spacing: 10) {
-                    // Preview In
+                // Preview toolbar
+                HStack(spacing: 8) {
                     Button {
                         guard let url = trackURL else { return }
                         preview.preview(url: url, from: trimStart, mode: .inPoint)
                     } label: {
-                        Label("In point", systemImage: "arrow.right.to.line.compact")
+                        Label("In", systemImage: "arrow.right.to.line.compact")
                     }
                     .disabled(trackURL == nil || preview.isPlaying)
-                    .help("Play from the in point — press Stop or Set Point when done")
+                    .help("Preview from in point")
 
-                    // Preview Out
                     Button {
                         guard let url = trackURL else { return }
                         preview.preview(url: url,
                                         from: max(trimStart, trimEnd - previewWindow),
                                         mode: .outPoint)
                     } label: {
-                        Label("Out point", systemImage: "arrow.left.to.line.compact")
+                        Label("Out", systemImage: "arrow.left.to.line.compact")
                     }
                     .disabled(trackURL == nil || preview.isPlaying)
-                    .help("Play from \(Int(previewWindow))s before the out point — press Set Point at the right moment")
+                    .help("Preview from \(Int(previewWindow))s before out point")
 
-                    // While playing: Stop + Set Here
                     if preview.isPlaying {
-                        Button { preview.stop() } label: {
-                            Image(systemName: "stop.fill")
-                        }
-                        .foregroundStyle(.red)
-                        .help("Stop preview")
+                        Button { preview.stop() } label: { Image(systemName: "stop.fill") }
+                            .foregroundStyle(.red)
+                            .help("Stop preview")
 
                         Button("Set Point") {
                             let t = preview.currentTime
@@ -2804,37 +3000,42 @@ private struct TrimEditorView: View {
                             preview.stop()
                         }
                         .foregroundStyle(.yellow)
-                        .help("Snap the trim point to the current playback position")
+                        .help("Snap trim point to current playback position")
+
+                        Text(fmtTime(preview.currentTime))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                     }
 
                     Spacer()
 
-                    if preview.isPlaying {
-                        Text(fmtTime(preview.currentTime))
-                            .font(.system(.caption, design: .monospaced))
+                    // Hint: ramp is draggable on the waveform
+                    if rampEnabled {
+                        Label("Drag orange marker to adjust ramp", systemImage: "info.circle")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .monospacedDigit()
                     }
                 }
+                .font(.callout)
             }
+            .padding([.horizontal, .top], 14)
+            .padding(.bottom, 10)
 
             Divider()
 
             // ── Action row ────────────────────────────────────────────
             HStack {
-                Button("Clear Trim") {
-                    trimStart = 0
-                    trimEnd   = duration
-                    preview.stop()
-                }
                 Spacer()
                 Button("Cancel") { preview.stop(); onCancel() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Save")   { preview.stop(); onSave()   }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
             }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
         }
-        .padding()
-        .frame(minWidth: 460)
+        .frame(minWidth: 680)
         .onAppear { if let url = trackURL { waveform.load(url: url) } }
         .onDisappear { preview.stop() }
     }
