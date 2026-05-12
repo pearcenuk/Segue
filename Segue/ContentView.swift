@@ -216,6 +216,23 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var showingKeyboardShortcuts: Bool = false
     var lastExportDirectory: URL? = nil
 
+    weak var undoManager: UndoManager? = nil
+
+    func setUndoManager(_ um: UndoManager?) { undoManager = um }
+
+    private func registerUndo(named name: String) {
+        guard let um = undoManager else { return }
+        let prevItems = items
+        let prevIndex = currentIndex
+        um.registerUndo(withTarget: self) { target in
+            target.registerUndo(named: name)
+            target.items = prevItems
+            target.currentIndex = prevIndex
+            target.savePlaylist()
+        }
+        um.setActionName(name)
+    }
+
     // Currently loaded playlist file name (without .json extension), nil when unsaved
     @Published var currentPlaylistName: String? = nil
 
@@ -277,6 +294,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 return PlaylistItem.track(t)
             }
         guard !newItems.isEmpty else { return }
+        registerUndo(named: newItems.count == 1 ? "Add Track" : "Add Tracks")
         let safeIndex = max(0, min(index, items.count))
         items.insert(contentsOf: newItems, at: safeIndex)
         savePlaylist()
@@ -291,6 +309,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func addPause(at index: Int? = nil) {
+        registerUndo(named: "Add Pause")
         if let index, items.indices.contains(index) {
             items.insert(.pause(PauseItem()), at: index)
         } else {
@@ -300,6 +319,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func remove(atOffsets offsets: IndexSet) {
+        registerUndo(named: offsets.count == 1 ? "Remove Item" : "Remove Items")
         if let current = currentIndex, offsets.contains(current) {
             stopPlayback()
             stopBed(fadeDuration: 0.3)
@@ -311,6 +331,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func move(from source: IndexSet, to destination: Int) {
+        registerUndo(named: "Move Item")
         let currentID = currentIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil }
         items.move(fromOffsets: source, toOffset: destination)
         if let id = currentID {
@@ -819,6 +840,51 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         items[index] = .pause(p)
         savePlaylist()
         if currentIndex == index { stopBed() }
+    }
+
+    func setTagColor(_ color: RGBAColor?, at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Tag Color")
+        t.tagColor = color
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func toggleCrossfade(at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Crossfade")
+        t.crossfadeEnabled.toggle()
+        t.usesDefaultCrossfadeEnabled = false
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func setCrossfadeDuration(_ duration: TimeInterval, at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Fade Duration")
+        t.crossfadeDuration = duration
+        t.usesDefaultCrossfadeDuration = false
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func setTrim(start: TimeInterval, end: TimeInterval?, at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Trim")
+        t.trimStart = start
+        t.trimEnd = end
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func moveItem(with id: UUID, to targetIndex: Int) {
+        guard let fromIndex = items.firstIndex(where: { $0.id == id }), fromIndex != targetIndex else { return }
+        registerUndo(named: "Move Item")
+        let currentID = currentIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil }
+        let item = items.remove(at: fromIndex)
+        items.insert(item, at: max(0, min(targetIndex, items.count)))
+        if let id = currentID { currentIndex = items.firstIndex(where: { $0.id == id }) }
+        savePlaylist()
     }
 
     private func startTimeUpdates() {
@@ -1335,6 +1401,7 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
 
 struct ContentView: View {
     @StateObject private var vm = PlayoutViewModel()
+    @Environment(\.undoManager) private var undoManager
     @State private var draggingItemID: UUID? = nil
 
     @State private var showingCrossfadeEditor = false
@@ -1627,6 +1694,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .automatic) { settingsButton }
             }
             .onAppear {
+                vm.setUndoManager(undoManager)
                 vm.loadDefaults()
             }
             .sheet(isPresented: $showingCrossfadeEditor) {
@@ -1642,11 +1710,8 @@ struct ContentView: View {
                         Spacer()
                         Button("Cancel") { showingCrossfadeEditor = false }
                         Button("Save") {
-                            if let i = editingCrossfadeIndex, vm.items.indices.contains(i), case .track(var t) = vm.items[i] {
-                                t.crossfadeDuration = pendingCrossfadeDuration
-                                t.usesDefaultCrossfadeDuration = false
-                                vm.items[i] = .track(t)
-                                vm.savePlaylist()
+                            if let i = editingCrossfadeIndex {
+                                vm.setCrossfadeDuration(pendingCrossfadeDuration, at: i)
                             }
                             showingCrossfadeEditor = false
                         }
@@ -1664,13 +1729,12 @@ struct ContentView: View {
                     trimEnd: $pendingTrimEnd,
                     duration: trimEditorDuration,
                     onSave: {
-                        if let i = editingTrimIndex,
-                           vm.items.indices.contains(i),
-                           case .track(var t) = vm.items[i] {
-                            t.trimStart = pendingTrimStart
-                            t.trimEnd = pendingTrimEnd < trimEditorDuration ? pendingTrimEnd : nil
-                            vm.items[i] = .track(t)
-                            vm.savePlaylist()
+                        if let i = editingTrimIndex {
+                            vm.setTrim(
+                                start: pendingTrimStart,
+                                end: pendingTrimEnd < trimEditorDuration ? pendingTrimEnd : nil,
+                                at: i
+                            )
                         }
                         showingTrimEditor = false
                     },
@@ -1796,14 +1860,7 @@ struct ContentView: View {
             onPlay: { vm.play(at: index) },
             onInsertPauseBefore: { vm.addPause(at: index) },
             onInsertPauseAfter: { vm.addPause(at: index + 1) },
-            onToggleCrossfade: {
-                if case .track(var t) = vm.items[index] {
-                    t.crossfadeEnabled.toggle()
-                    t.usesDefaultCrossfadeEnabled = false
-                    vm.items[index] = .track(t)
-                    vm.savePlaylist()
-                }
-            },
+            onToggleCrossfade: { vm.toggleCrossfade(at: index) },
             onEditCrossfade: {
                 if case .track(let t) = vm.items[index] {
                     editingCrossfadeIndex = index
@@ -1825,13 +1882,7 @@ struct ContentView: View {
             },
             onRemove: { vm.remove(atOffsets: IndexSet([index])) },
             onRemovePause: { vm.remove(atOffsets: IndexSet([index])) },
-            onSetColor: { newColor in
-                if case .track(var t) = vm.items[index] {
-                    t.tagColor = newColor
-                    vm.items[index] = .track(t)
-                    vm.savePlaylist()
-                }
-            },
+            onSetColor: { vm.setTagColor($0, at: index) },
             bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
             onAssignBed: { openBedPicker(for: index) },
             onRemoveBed: { vm.removeBed(at: index) },
@@ -2405,16 +2456,7 @@ struct ContentView: View {
     }
     
     private func moveItem(with id: UUID, to targetIndex: Int) {
-        guard let fromIndex = vm.items.firstIndex(where: { $0.id == id }) else { return }
-        if fromIndex == targetIndex { return }
-        let currentID = vm.currentIndex.flatMap { vm.items.indices.contains($0) ? vm.items[$0].id : nil }
-        let item = vm.items.remove(at: fromIndex)
-        let safeTarget = max(0, min(targetIndex, vm.items.count))
-        vm.items.insert(item, at: safeTarget)
-        if let id = currentID {
-            vm.currentIndex = vm.items.firstIndex(where: { $0.id == id })
-        }
-        vm.savePlaylist()
+        vm.moveItem(with: id, to: targetIndex)
     }
 
     private func openBedPicker(for index: Int) {
@@ -2433,6 +2475,161 @@ struct ContentView: View {
 
 /// Manages the preview AVAudioPlayer for the trim editor so timer callbacks
 /// can safely mutate @Published state without value-type struct capture problems.
+// MARK: - Waveform
+
+private final class WaveformLoader: ObservableObject {
+    @Published var samples: [Float] = []
+
+    func load(url: URL) {
+        samples = []
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let result = Self.compute(url: url)
+            DispatchQueue.main.async { self?.samples = result }
+        }
+    }
+
+    private static func compute(url: URL, targetCount: Int = 400) -> [Float] {
+        guard let file = try? AVAudioFile(forReading: url), file.length > 0 else { return [] }
+        let framesPerBucket = max(1, Int(file.length) / targetCount)
+        let chunkSize: AVAudioFrameCount = 4096
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                            frameCapacity: chunkSize) else { return [] }
+        let channelCount = Int(file.processingFormat.channelCount)
+        var result: [Float] = []
+        var bucketPeak: Float = 0
+        var framesInBucket = 0
+        while file.framePosition < file.length {
+            let rem = AVAudioFrameCount(file.length - file.framePosition)
+            buffer.frameLength = min(chunkSize, rem)
+            guard (try? file.read(into: buffer, frameCount: buffer.frameLength)) != nil,
+                  let floatData = buffer.floatChannelData else { break }
+            for i in 0..<Int(buffer.frameLength) {
+                var peak: Float = 0
+                for ch in 0..<channelCount { peak = max(peak, abs(floatData[ch][i])) }
+                bucketPeak = max(bucketPeak, peak)
+                framesInBucket += 1
+                if framesInBucket >= framesPerBucket {
+                    result.append(bucketPeak); bucketPeak = 0; framesInBucket = 0
+                }
+            }
+        }
+        if framesInBucket > 0 { result.append(bucketPeak) }
+        guard let maxVal = result.max(), maxVal > 0 else { return result }
+        return result.map { $0 / maxVal }
+    }
+}
+
+private struct WaveformTrimView: View {
+    let duration: Double
+    @Binding var trimStart: Double
+    @Binding var trimEnd: Double
+    let samples: [Float]
+    let previewTime: TimeInterval?
+
+    @State private var dragTarget: DragTarget? = nil
+    private enum DragTarget { case inPoint, outPoint }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let inX  = CGFloat(trimStart / max(duration, 1)) * w
+            let outX = CGFloat(trimEnd   / max(duration, 1)) * w
+
+            Canvas { ctx, size in
+                // Background
+                ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                         with: .color(Color.primary.opacity(0.07)))
+
+                // Waveform bars
+                if !samples.isEmpty {
+                    let barW = size.width / CGFloat(samples.count)
+                    for (i, s) in samples.enumerated() {
+                        let x  = CGFloat(i) * barW
+                        let bh = max(1, CGFloat(s) * size.height * 0.85)
+                        let y  = (size.height - bh) / 2
+                        let active = (x + barW * 0.5) >= inX && (x + barW * 0.5) <= outX
+                        ctx.fill(
+                            Path(CGRect(x: x, y: y, width: max(1, barW - 0.5), height: bh)),
+                            with: .color(active ? Color.accentColor : Color.secondary.opacity(0.2))
+                        )
+                    }
+                }
+
+                // Trim region tint
+                if outX > inX {
+                    ctx.fill(Path(CGRect(x: inX, y: 0, width: outX - inX, height: size.height)),
+                             with: .color(Color.accentColor.opacity(0.1)))
+                }
+
+                // In-point and out-point handles
+                ctx.fill(Path(CGRect(x: max(0, inX - 1.5),  y: 0, width: 3, height: size.height)), with: .color(.green))
+                ctx.fill(Path(CGRect(x: max(0, outX - 1.5), y: 0, width: 3, height: size.height)), with: .color(.red))
+
+                // Playhead
+                if let t = previewTime, duration > 0 {
+                    let px = CGFloat(t / duration) * size.width
+                    ctx.fill(Path(CGRect(x: px - 1, y: 0, width: 2, height: size.height)),
+                             with: .color(Color.white.opacity(0.85)))
+                }
+
+                // Time labels
+                ctx.draw(
+                    Text(mmss(trimStart))
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.green),
+                    at: CGPoint(x: inX + 5, y: size.height - 5),
+                    anchor: .bottomLeading
+                )
+                ctx.draw(
+                    Text(mmss(trimEnd))
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.red),
+                    at: CGPoint(x: outX - 5, y: size.height - 5),
+                    anchor: .bottomTrailing
+                )
+
+                // "Loading…" placeholder
+                if samples.isEmpty {
+                    ctx.draw(
+                        Text("Loading waveform…")
+                            .font(.caption)
+                            .foregroundStyle(Color.secondary),
+                        at: CGPoint(x: size.width / 2, y: size.height / 2)
+                    )
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { val in
+                        let t = Double(val.location.x / max(w, 1)) * duration
+                        if dragTarget == nil {
+                            dragTarget = abs(val.location.x - inX) <= abs(val.location.x - outX)
+                                ? .inPoint : .outPoint
+                        }
+                        switch dragTarget! {
+                        case .inPoint:  trimStart = max(0,        min(t, trimEnd - 0.5))
+                        case .outPoint: trimEnd   = min(duration, max(t, trimStart + 0.5))
+                        }
+                    }
+                    .onEnded { _ in dragTarget = nil }
+            )
+        }
+    }
+
+    private func mmss(_ t: TimeInterval) -> String {
+        let n = Int(max(0, t))
+        return String(format: "%d:%02d", (n / 60) % 60, n % 60)
+    }
+}
+
+// MARK: - Trim preview state
+
 private final class TrimPreviewState: ObservableObject {
     enum Mode { case inPoint, outPoint }
 
@@ -2490,6 +2687,7 @@ private struct TrimEditorView: View {
     let onCancel: () -> Void
 
     @StateObject private var preview = TrimPreviewState()
+    @StateObject private var waveform = WaveformLoader()
 
     private let previewWindow: TimeInterval = 10
 
@@ -2552,13 +2750,14 @@ private struct TrimEditorView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Preview").font(.subheadline).fontWeight(.medium)
 
-                TrimTimelineView(
+                WaveformTrimView(
                     duration: duration,
-                    trimStart: trimStart,
-                    trimEnd: trimEnd,
+                    trimStart: $trimStart,
+                    trimEnd: $trimEnd,
+                    samples: waveform.samples,
                     previewTime: preview.isPlaying ? preview.currentTime : nil
                 )
-                .frame(height: 40)
+                .frame(height: 80)
 
                 HStack(spacing: 10) {
                     // Preview In
@@ -2636,6 +2835,7 @@ private struct TrimEditorView: View {
         }
         .padding()
         .frame(minWidth: 460)
+        .onAppear { if let url = trackURL { waveform.load(url: url) } }
         .onDisappear { preview.stop() }
     }
 
@@ -2644,78 +2844,6 @@ private struct TrimEditorView: View {
         let h = n / 3600; let m = (n / 60) % 60; let s = n % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
                      : String(format: "%d:%02d", m, s)
-    }
-}
-
-/// A horizontal bar showing the full track duration with the active trim region
-/// highlighted and an optional playhead.
-private struct TrimTimelineView: View {
-    let duration: Double
-    let trimStart: Double
-    let trimEnd: Double
-    let previewTime: TimeInterval?
-
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let sx = CGFloat(trimStart / max(duration, 1)) * w
-            let ex = CGFloat(trimEnd   / max(duration, 1)) * w
-
-            ZStack(alignment: .leading) {
-                // Full track background
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color.primary.opacity(0.09))
-
-                // Kept region
-                Rectangle()
-                    .fill(Color.accentColor.opacity(0.28))
-                    .frame(width: max(0, ex - sx))
-                    .offset(x: sx)
-
-                // In-point marker
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 2)
-                    .offset(x: sx)
-
-                // Out-point marker
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 2)
-                    .offset(x: max(sx, ex - 2))
-
-                // Playhead
-                if let t = previewTime {
-                    let px = CGFloat(t / max(duration, 1)) * w
-                    Rectangle()
-                        .fill(Color.white.opacity(0.9))
-                        .frame(width: 2)
-                        .shadow(color: .black.opacity(0.5), radius: 2)
-                        .offset(x: max(0, min(px - 1, w - 2)))
-                }
-
-                // Trim time labels
-                HStack(spacing: 0) {
-                    Spacer().frame(width: max(4, sx))
-                    Text(mmss(trimStart))
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
-                    Spacer()
-                    Text(mmss(trimEnd))
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
-                    Spacer().frame(width: max(4, w - ex))
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5)
-                         .stroke(Color.primary.opacity(0.12), lineWidth: 1))
-        }
-    }
-
-    private func mmss(_ t: TimeInterval) -> String {
-        let n = Int(max(0, t))
-        return String(format: "%d:%02d", (n / 60) % 60, n % 60)
     }
 }
 
