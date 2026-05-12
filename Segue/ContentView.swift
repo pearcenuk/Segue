@@ -1492,7 +1492,6 @@ struct ContentView: View {
         @ViewBuilder
         private func trackRow(_ t: Track) -> some View {
             let isTrimmed = t.trimStart > 0 || t.trimEnd != nil
-            let hasRamp = t.rampDuration != nil
             let displayDuration = t.effectiveDuration ?? t.durationSeconds
             HStack(spacing: 10) {
                 // Track index
@@ -1521,16 +1520,28 @@ struct ContentView: View {
                     .truncationMode(.tail)
                     .foregroundStyle(t.tagColor.map { Color($0) } ?? Color.primary)
                 Spacer()
-                // Duration with optional trim / ramp indicators
+                // Duration with optional trim indicator
                 if let d = displayDuration {
                     HStack(spacing: 3) {
                         if isTrimmed { Image(systemName: "scissors").font(.caption2) }
-                        if hasRamp   { Image(systemName: "timer").font(.caption2) }
                         Text(timeStringStatic(d))
                             .font(.system(size: 14).monospacedDigit())
                             .frame(minWidth: 50, alignment: .trailing)
                     }
-                    .foregroundStyle((isTrimmed || hasRamp) ? Color.orange : Color.primary.opacity(0.55))
+                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
+                }
+                // Ramp badge
+                if let rd = t.rampDuration {
+                    HStack(spacing: 3) {
+                        Image(systemName: "timer").font(.caption2)
+                        Text(timeStringStatic(rd))
+                            .font(.system(size: 12).monospacedDigit())
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.orange.opacity(0.2)))
+                    .foregroundStyle(Color.orange)
+                    .help("Ramp timer: \(timeStringStatic(rd)) talk-up from in point")
                 }
                 // CF badge
                 if t.crossfadeEnabled {
