@@ -1543,18 +1543,6 @@ struct ContentView: View {
                         .foregroundStyle(.tint)
                         .help("Fades out into the next track (\(String(format: "%.1f", t.crossfadeDuration))s)")
                 }
-                // Normalization badge
-                if let gain = t.normalizeGain {
-                    let gainDB = 20.0 * log10(Double(gain))
-                    let label = gainDB >= 0 ? String(format: "+%.1f", gainDB) : String(format: "%.1f", gainDB)
-                    Text(label)
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green.opacity(gain < 1.0 ? 0.22 : 0.14)))
-                        .foregroundStyle(Color.green)
-                        .help("Normalization: \(label) dB applied to reach −23 dBFS")
-                }
                 // Duration — always far right before drag handle
                 if let d = displayDuration {
                     HStack(spacing: 3) {
@@ -1745,6 +1733,7 @@ struct ContentView: View {
             .onAppear {
                 vm.setUndoManager(undoManager)
                 vm.loadDefaults()
+                vm.loadPersistedPlaylist()
             }
             .sheet(isPresented: $showingTrackEditor) {
                 TrackEditorView(
