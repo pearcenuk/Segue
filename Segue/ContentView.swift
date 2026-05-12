@@ -1473,7 +1473,6 @@ struct ContentView: View {
         let onPlay: () -> Void
         let onInsertPauseBefore: () -> Void
         let onInsertPauseAfter: () -> Void
-        let onToggleCrossfade: () -> Void
         let onEditTrack: () -> Void
         let onRemove: () -> Void
         let onRemovePause: () -> Void
@@ -1493,6 +1492,7 @@ struct ContentView: View {
         @ViewBuilder
         private func trackRow(_ t: Track) -> some View {
             let isTrimmed = t.trimStart > 0 || t.trimEnd != nil
+            let hasRamp = t.rampDuration != nil
             let displayDuration = t.effectiveDuration ?? t.durationSeconds
             HStack(spacing: 10) {
                 // Track index
@@ -1521,15 +1521,16 @@ struct ContentView: View {
                     .truncationMode(.tail)
                     .foregroundStyle(t.tagColor.map { Color($0) } ?? Color.primary)
                 Spacer()
-                // Duration with optional trim indicator
+                // Duration with optional trim / ramp indicators
                 if let d = displayDuration {
                     HStack(spacing: 3) {
                         if isTrimmed { Image(systemName: "scissors").font(.caption2) }
+                        if hasRamp   { Image(systemName: "timer").font(.caption2) }
                         Text(timeStringStatic(d))
                             .font(.system(size: 14).monospacedDigit())
                             .frame(minWidth: 50, alignment: .trailing)
                     }
-                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
+                    .foregroundStyle((isTrimmed || hasRamp) ? Color.orange : Color.primary.opacity(0.55))
                 }
                 // CF badge
                 if t.crossfadeEnabled {
@@ -1575,7 +1576,6 @@ struct ContentView: View {
                 Divider()
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
-                Button(t.crossfadeEnabled ? "Disable Fade-out to Next" : "Fade Out into Next Track", action: onToggleCrossfade)
                 Button("Edit Track…", action: onEditTrack)
                 Menu("Tag Color") {
                     Button("Red") { onSetColor(RGBAColor(Color.red)) }
@@ -1881,7 +1881,6 @@ struct ContentView: View {
             onPlay: { vm.play(at: index) },
             onInsertPauseBefore: { vm.addPause(at: index) },
             onInsertPauseAfter: { vm.addPause(at: index + 1) },
-            onToggleCrossfade: { vm.toggleCrossfade(at: index) },
             onEditTrack: {
                 if case .track(let t) = vm.items[index] {
                     editingTrackIndex = index
