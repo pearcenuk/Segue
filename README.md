@@ -167,6 +167,8 @@ All formats work for both tracks and bed music.
 | `⌘ L` | Import playlist from JSON |
 | `⌘ S` | Export playlist to JSON |
 | `⌘ N` | New playlist (clear all) |
+| `⌘ Z` / `⇧ ⌘ Z` | Undo / redo playlist edit |
+| `Delete` | Remove selected tracks |
 
 ### Session
 

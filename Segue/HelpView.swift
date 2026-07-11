@@ -381,6 +381,8 @@ private struct KeyboardShortcutsHelp: View {
                 HelpShortcutRow(key: "⌘ L",       description: "Import playlist from JSON")
                 HelpShortcutRow(key: "⌘ S",       description: "Export playlist to JSON")
                 HelpShortcutRow(key: "⌘ N",       description: "New playlist (clear all)")
+                HelpShortcutRow(key: "⌘ Z / ⇧ ⌘ Z", description: "Undo / redo playlist edit")
+                HelpShortcutRow(key: "Delete",     description: "Remove selected tracks")
             }
 
             HelpSubheading(text: "Session")

@@ -2336,6 +2336,7 @@ struct ContentView: View {
                     ShortcutRow(key: "←", description: "Seek back 5 seconds")
                     ShortcutRow(key: "→", description: "Seek forward 5 seconds")
                     ShortcutRow(key: "⌘ + .", description: "Fade out and stop")
+                    ShortcutRow(key: "⌘ + E", description: "Jump to 10 seconds before end")
                     ShortcutRow(key: "B", description: "Pause / resume bed")
                 }
 
@@ -2346,6 +2347,9 @@ struct ContentView: View {
                     ShortcutRow(key: "⌘ + O", description: "Add audio files")
                     ShortcutRow(key: "⌘ + L", description: "Import playlist")
                     ShortcutRow(key: "⌘ + S", description: "Export playlist")
+                    ShortcutRow(key: "⌘ + N", description: "New playlist (clear all)")
+                    ShortcutRow(key: "⌘ + Z / ⇧ + ⌘ + Z", description: "Undo / redo playlist edit")
+                    ShortcutRow(key: "Delete", description: "Remove selected tracks")
                     ShortcutRow(key: "⇧ + ⌘ + R", description: "Reset session (keep tracks, clear played)")
                 }
 
@@ -2361,7 +2365,8 @@ struct ContentView: View {
 
                 Group {
                     Text("Other").font(.headline)
-                    ShortcutRow(key: "?", description: "Show keyboard shortcuts")
+                    ShortcutRow(key: "⌘ + ,", description: "Settings")
+                    ShortcutRow(key: "? or ⌘ + /", description: "Show keyboard shortcuts")
                 }
             }
 
