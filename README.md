@@ -10,6 +10,12 @@
 
 <p align="center"><strong>Requires macOS 26 (Tahoe) or later.</strong></p>
 
+<p align="center">
+  <a href="https://pearcenuk.github.io/segue-site/">Website</a> ·
+  <a href="https://github.com/pearcenuk/Segue/releases/latest">Download</a> ·
+  <a href="https://github.com/pearcenuk/Segue/issues">Issues</a>
+</p>
+
 ## About this project
 
 Segue was written entirely with [Claude Code](https://claude.com/claude-code). I can't code in Swift — this is an experiment in describing the tool I wanted and having AI build it. It does what I need for my own shows, and I'm sharing it in case it's useful to others in the Mac community.
