@@ -200,7 +200,7 @@ private struct BuildingPlaylistHelp: View {
             HelpBody(text: "Drag any row by its handle (the three horizontal lines on the right) to move it. You can also drag a track to the very top or bottom and the list will scroll automatically.")
 
             HelpSubheading(text: "Removing tracks")
-            HelpBody(text: "Right-click a track and choose **Remove**, or swipe left on a row. You can also select multiple rows and press Delete.")
+            HelpBody(text: "Right-click a track and choose **Remove**, or swipe left on a row with the trackpad.")
 
             HelpSubheading(text: "Adding pauses")
             HelpBody(text: "Right-click any track and choose **Insert Pause Before** or **Insert Pause After**. A pause row appears in red italic text. When playback reaches a pause, Segue stops automatically and waits for you to press Space (or Next) to continue.")
@@ -382,7 +382,6 @@ private struct KeyboardShortcutsHelp: View {
                 HelpShortcutRow(key: "⌘ S",       description: "Export playlist to JSON")
                 HelpShortcutRow(key: "⌘ N",       description: "New playlist (clear all)")
                 HelpShortcutRow(key: "⌘ Z / ⇧ ⌘ Z", description: "Undo / redo playlist edit")
-                HelpShortcutRow(key: "Delete",     description: "Remove selected tracks")
             }
 
             HelpSubheading(text: "Session")

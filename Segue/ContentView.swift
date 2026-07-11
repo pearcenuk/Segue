@@ -557,7 +557,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         } else {
             end = p.duration
         }
-        p.currentTime = max(0, end - secondsFromEnd)
+        p.currentTime = max(currentTrimStart, end - secondsFromEnd)
         currentTime = p.currentTime
     }
 
@@ -601,6 +601,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         } catch {
             print("Failed to play: \(error)")
             isPlaying = false
+            endScopedAccess()
+            // Skip unplayable tracks (e.g. missing file on an unmounted drive)
+            // instead of stalling the playlist — recursion ends at the last item.
+            if let idx = currentIndex, case .track(let t) = items[idx] {
+                appendLog(trackTitle: t.title, event: .skipped)
+            }
+            next()
         }
     }
 
@@ -1090,8 +1097,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             nearingEndThreshold      = decoded.nearingEndThreshold
             crossfadeCurve           = decoded.crossfadeCurve
         }
-        let saved = UserDefaults.standard.float(forKey: "defaultBedVolume")
-        defaultBedVolume = saved > 0 ? saved : 0.4
+        if UserDefaults.standard.object(forKey: "defaultBedVolume") != nil {
+            defaultBedVolume = UserDefaults.standard.float(forKey: "defaultBedVolume")
+        }
     }
 
     func saveDefaults() {
@@ -2349,7 +2357,6 @@ struct ContentView: View {
                     ShortcutRow(key: "⌘ + S", description: "Export playlist")
                     ShortcutRow(key: "⌘ + N", description: "New playlist (clear all)")
                     ShortcutRow(key: "⌘ + Z / ⇧ + ⌘ + Z", description: "Undo / redo playlist edit")
-                    ShortcutRow(key: "Delete", description: "Remove selected tracks")
                     ShortcutRow(key: "⇧ + ⌘ + R", description: "Reset session (keep tracks, clear played)")
                 }
 
