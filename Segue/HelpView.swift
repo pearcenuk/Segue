@@ -399,7 +399,6 @@ private struct KeyboardShortcutsHelp: View {
             HelpSubheading(text: "App")
             VStack(alignment: .leading, spacing: 4) {
                 HelpShortcutRow(key: "⌘ ,",          description: "Settings")
-                HelpShortcutRow(key: "⌘ /",          description: "Keyboard shortcuts panel")
                 HelpShortcutRow(key: "?",             description: "Keyboard shortcuts panel")
             }
 

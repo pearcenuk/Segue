@@ -187,7 +187,7 @@ All formats work for both tracks and bed music.
 | Key | Action |
 |-----|--------|
 | `⌘ ,` | Settings |
-| `⌘ /` or `?` | Keyboard shortcuts panel |
+| `?` | Keyboard shortcuts panel |
 
 ---
 

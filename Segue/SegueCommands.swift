@@ -146,7 +146,6 @@ struct SegueCommands: Commands {
             Button("Keyboard Shortcuts") {
                 vm?.showingKeyboardShortcuts = true
             }
-            .keyboardShortcut("/", modifiers: .command)
 
             Button("Segue Help") {
                 openWindow(id: "segue-help")

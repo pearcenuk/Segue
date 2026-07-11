@@ -2373,7 +2373,7 @@ struct ContentView: View {
                 Group {
                     Text("Other").font(.headline)
                     ShortcutRow(key: "⌘ + ,", description: "Settings")
-                    ShortcutRow(key: "? or ⌘ + /", description: "Show keyboard shortcuts")
+                    ShortcutRow(key: "?", description: "Show keyboard shortcuts")
                 }
             }
 
