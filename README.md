@@ -1,8 +1,14 @@
-# Segue
+<p align="center">
+  <img src="docs/logo.png" alt="Segue logo" width="160">
+</p>
 
-Broadcast audio playout for macOS. Segue manages a playlist of audio tracks for live radio, podcasts, and event production — with crossfade, trim, ramp timers, pause beds, loudness normalisation, and a timestamped play log.
+<h1 align="center">Segue</h1>
 
-**Requires macOS 26 (Tahoe) or later.**
+<p align="center">
+  Broadcast audio playout for macOS. Segue manages a playlist of audio tracks for live radio, podcasts, and event production — with crossfade, trim, ramp timers, pause beds, loudness normalisation, and a timestamped play log.
+</p>
+
+<p align="center"><strong>Requires macOS 26 (Tahoe) or later.</strong></p>
 
 ## About this project
 
