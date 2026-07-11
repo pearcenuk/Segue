@@ -4,6 +4,12 @@ Broadcast audio playout for macOS. Segue manages a playlist of audio tracks for 
 
 **Requires macOS 26 (Tahoe) or later.**
 
+## About this project
+
+Segue was written entirely with [Claude Code](https://claude.com/claude-code). I can't code in Swift — this is an experiment in describing the tool I wanted and having AI build it. It does what I need for my own shows, and I'm sharing it in case it's useful to others in the Mac community.
+
+It's presented **as-is**: I may not be able to fix bugs beyond what I can describe to Claude, and it isn't notarized with Apple. Treat it accordingly — but the source is all here, MIT licensed, so fork away.
+
 ---
 
 ## Features
