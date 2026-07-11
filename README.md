@@ -25,6 +25,12 @@ Broadcast audio playout for macOS. Segue manages a playlist of audio tracks for 
 
 ---
 
+## Installing
+
+Download the latest `Segue-x.x.zip` from [Releases](https://github.com/pearcenuk/Segue/releases), unzip it, and drag `Segue.app` into your Applications folder.
+
+> **First launch:** Segue is not notarized by Apple, so macOS will block it the first time. Right-click `Segue.app` and choose **Open**, then confirm. If that option doesn't appear, go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
+
 ## Requirements
 
 - macOS 26 (Tahoe) or later
@@ -188,4 +194,4 @@ Export as CSV at the end of each show for music licensing submissions (APRA, PPL
 
 ## Licence
 
-MIT
+[MIT](LICENSE) — © 2025–2026 Neil Pearce

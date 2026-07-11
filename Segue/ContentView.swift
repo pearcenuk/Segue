@@ -1,8 +1,8 @@
 //
 //  ContentView.swift
-//  PodPlayout
+//  Segue
 //
-//  Created by Neil Pearce on 26/10/2025.
+//  Copyright © 2025-2026 Neil Pearce. MIT License.
 //
 
 import SwiftUI
