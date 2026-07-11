@@ -9,12 +9,7 @@ import SwiftUI
 import AVFoundation
 import Combine
 import UniformTypeIdentifiers
-
-#if os(iOS)
-import UIKit
-#elseif os(macOS)
 import AppKit
-#endif
 
 // MARK: - Models
 
@@ -22,6 +17,7 @@ struct PauseItem: Identifiable, Equatable {
     let id = UUID()
     var bedBookmark: Data? = nil
     var bedURL: URL? = nil
+    var bedNormalizeGain: Float? = nil   // linear gain to reach -23 dBFS RMS; nil = not yet scanned
 
     var bedFilename: String? { bedURL?.deletingPathExtension().lastPathComponent }
 
@@ -68,6 +64,7 @@ struct Track: Identifiable, Equatable {
     var isMissing: Bool = false
     var normalizeGain: Float? = nil  // linear gain to reach -23 dBFS RMS target; nil = not yet scanned
     var cachedBookmark: Data? = nil  // last known-good bookmark; used as fallback when volume is unreachable
+    var rampDuration: TimeInterval? = nil  // how long from trimStart the presenter should talk; nil = no ramp timer
 
     var effectiveDuration: TimeInterval? {
         guard let d = durationSeconds else { return nil }
@@ -112,46 +109,72 @@ extension Color {
 
 extension RGBAColor {
     init(_ color: Color) {
-        #if os(iOS)
-        let ui = UIColor(color)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        ui.getRed(&r, &g, &b, &a)
-        self.r = Double(r); self.g = Double(g); self.b = Double(b); self.a = Double(a)
-        #elseif os(macOS)
         let ns = NSColor(color)
         let c = ns.usingColorSpace(.sRGB) ?? ns
         self.r = Double(c.redComponent)
         self.g = Double(c.greenComponent)
         self.b = Double(c.blueComponent)
         self.a = Double(c.alphaComponent)
-        #else
-        self.r = 0; self.g = 0; self.b = 0; self.a = 0
-        #endif
     }
 }
 
-// MARK: - DisplayLink Protocol & Platform Specifics
+// MARK: - Play Log
 
-protocol CADisplayLinkLike {
-    func invalidate()
-}
-#if os(iOS) || os(tvOS) || os(visionOS)
-final class DisplayLinkBox: CADisplayLinkLike {
-    private var link: CADisplayLink?
-    init(_ callback: @escaping () -> Void) {
-        let l = CADisplayLink(target: BlockTarget(callback), selector: #selector(BlockTarget.fire))
-        l.add(to: .main, forMode: .common)
-        self.link = l
+enum PlayLogEvent: String, Codable {
+    case started, finished, skipped, fadedOut
+
+    var displayName: String {
+        switch self {
+        case .started:  return "Started"
+        case .finished: return "Finished"
+        case .skipped:  return "Skipped"
+        case .fadedOut: return "Faded Out"
+        }
     }
-    func invalidate() { link?.invalidate() }
-    private class BlockTarget: NSObject {
-        let cb: () -> Void
-        init(_ cb: @escaping () -> Void) { self.cb = cb }
-        @objc func fire() { cb() }
+
+    var icon: String {
+        switch self {
+        case .started:  return "play.fill"
+        case .finished: return "checkmark.circle.fill"
+        case .skipped:  return "forward.end.fill"
+        case .fadedOut: return "speaker.slash.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .started:  return .green
+        case .finished: return .accentColor
+        case .skipped:  return .orange
+        case .fadedOut: return .secondary
+        }
     }
 }
-#else
-final class DisplayLinkBox: CADisplayLinkLike {
+
+struct PlayLogEntry: Identifiable {
+    let id = UUID()
+    let timestamp: Date
+    let trackTitle: String
+    let event: PlayLogEvent
+}
+
+// MARK: - Crossfade Curve
+
+enum CrossfadeCurve: String, Codable, CaseIterable {
+    case linear
+    case equalPower
+
+    var displayName: String {
+        switch self {
+        case .linear:     return "Linear"
+        case .equalPower: return "Equal Power"
+        }
+    }
+}
+
+// MARK: - DisplayLink
+
+final class DisplayLinkBox {
     private var timer: Timer?
     init(_ callback: @escaping () -> Void) {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { _ in callback() }
@@ -159,7 +182,6 @@ final class DisplayLinkBox: CADisplayLinkLike {
     }
     func invalidate() { timer?.invalidate() }
 }
-#endif
 
 // MARK: - View Model
 
@@ -175,7 +197,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     @Published var effectiveEnd: TimeInterval = 0
     @Published var currentTrimStart: TimeInterval = 0
     @Published var isNearingEnd: Bool = false
-    
+    @Published var rampCountdown: TimeInterval? = nil
+
     @Published var defaultCrossfadeEnabled: Bool = false
     @Published var defaultCrossfadeDuration: TimeInterval = 1.0
     @Published var playedTrackIDs: Set<UUID> = []
@@ -185,13 +208,45 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     private var peakHoldCounters: [Int] = [0, 0]
 
     @Published var scanningTrackIDs: Set<UUID> = []
-    @Published var defaultBedVolume: Float = 0.4
+    @Published var defaultBedVolume: Float = 0.4 {
+        didSet { applyBedVolumeChange() }
+    }
 
     // UI state that commands + toolbar both need to trigger
     @Published var showingSettings: Bool = false
     @Published var showingClearConfirm: Bool = false
     @Published var showingKeyboardShortcuts: Bool = false
     var lastExportDirectory: URL? = nil
+
+    weak var undoManager: UndoManager? = nil
+
+    func setUndoManager(_ um: UndoManager?) { undoManager = um }
+
+    private func registerUndo(named name: String) {
+        guard let um = undoManager else { return }
+        let prevItems = items
+        let prevIndex = currentIndex
+        um.registerUndo(withTarget: self) { target in
+            target.registerUndo(named: name)
+            target.items = prevItems
+            target.currentIndex = prevIndex
+            target.savePlaylist()
+        }
+        um.setActionName(name)
+    }
+
+    // Currently loaded playlist file name (without .json extension), nil when unsaved
+    @Published var currentPlaylistName: String? = nil
+
+    // Play log — timestamped record of track events
+    @Published var playLog: [PlayLogEntry] = []
+    @Published var showingPlayLog: Bool = false
+
+    // Crossfade curve applied when fading between tracks
+    @Published var crossfadeCurve: CrossfadeCurve = .linear
+
+    // Seconds before the effective end at which the nearing-end warning fires
+    @Published var nearingEndThreshold: TimeInterval = 30
 
     // Layout preference — persisted to UserDefaults (default: playlist at bottom)
     @Published var playlistAtBottom: Bool = {
@@ -204,12 +259,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     @Published var bedIsPlaying: Bool = false
+    @Published var pauseEnteredAt: Date? = nil   // set when playback lands on a pause row
     private var bedPlayer: AVAudioPlayer? = nil
     private var bedScopedURL: URL? = nil
+    private var currentBedTargetVolume: Float = 0.4   // normalised + scaled target for the active bed
+    private var currentBedNormGain: Float = 1.0       // RMS normalisation factor for the current bed
 
     private var player: AVAudioPlayer?
     private var altPlayer: AVAudioPlayer?
-    private var timeLink: CADisplayLinkLike?
+    private var timeLink: DisplayLinkBox?
 
     private var currentScopedURL: URL? = nil
     private var currentScopeActive: Bool = false
@@ -219,6 +277,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     // Load files — all formats AVAudioPlayer supports on macOS
     func addFiles(urls: [URL]) {
+        insertFiles(urls: urls, at: items.count)
+    }
+
+    func insertFiles(urls: [URL], at index: Int) {
         let supported: Set<String> = ["mp3", "wav", "aiff", "aif", "m4a", "flac", "aac", "caf", "mp4"]
         let newItems: [PlaylistItem] = urls
             .filter { supported.contains($0.pathExtension.lowercased()) }
@@ -233,7 +295,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 if seconds.isFinite && seconds > 0 { t.durationSeconds = seconds }
                 return PlaylistItem.track(t)
             }
-        items.append(contentsOf: newItems)
+        guard !newItems.isEmpty else { return }
+        registerUndo(named: newItems.count == 1 ? "Add Track" : "Add Tracks")
+        let safeIndex = max(0, min(index, items.count))
+        items.insert(contentsOf: newItems, at: safeIndex)
         savePlaylist()
         let newIDs = newItems.compactMap { if case .track(let t) = $0 { return t.id } else { return nil } }
         scanTracks(newIDs)
@@ -246,6 +311,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func addPause(at index: Int? = nil) {
+        registerUndo(named: "Add Pause")
         if let index, items.indices.contains(index) {
             items.insert(.pause(PauseItem()), at: index)
         } else {
@@ -255,19 +321,23 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func remove(atOffsets offsets: IndexSet) {
-        items.remove(atOffsets: offsets)
-        // Adjust current index if needed
-        if let current = currentIndex {
-            if items.indices.contains(current) == false { currentIndex = nil }
+        registerUndo(named: offsets.count == 1 ? "Remove Item" : "Remove Items")
+        if let current = currentIndex, offsets.contains(current) {
+            stopPlayback()
+            stopBed(fadeDuration: 0.3)
         }
+        let currentID: UUID? = currentIndex.flatMap { offsets.contains($0) ? nil : items[$0].id }
+        items.remove(atOffsets: offsets)
+        currentIndex = currentID.flatMap { id in items.firstIndex(where: { $0.id == id }) }
         savePlaylist()
     }
 
     func move(from source: IndexSet, to destination: Int) {
+        registerUndo(named: "Move Item")
+        let currentID = currentIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil }
         items.move(fromOffsets: source, toOffset: destination)
-        // Keep currentIndex aligned to the same item if possible
-        if let current = currentIndex, current < items.count {
-            // No-op: SwiftUI move keeps order; currentIndex still points to same position
+        if let id = currentID {
+            currentIndex = items.firstIndex(where: { $0.id == id })
         }
         savePlaylist()
     }
@@ -276,6 +346,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         if let idx = currentIndex, case .track(let t) = items[idx] {
             playedTrackIDs.insert(t.id)
         }
+    }
+
+    private func appendLog(trackTitle: String, event: PlayLogEvent) {
+        playLog.append(PlayLogEntry(timestamp: Date(), trackTitle: trackTitle, event: event))
     }
 
     func play(at index: Int? = nil) {
@@ -291,6 +365,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         case .pause(let p):
             stopPlayback(keepIndex: true)
             startBed(for: p)
+            pauseEnteredAt = Date()
         case .track(let track):
             startPlayback(url: track.url)
         }
@@ -334,6 +409,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func stopPlayback(keepIndex: Bool = false) {
+        pauseEnteredAt = nil
         fade(to: 0.0, duration: 0.2) {
             self.player?.stop()
             self.player = nil
@@ -342,7 +418,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.endScopedAccess()
             self.isPlaying = false
             if !keepIndex { self.currentIndex = nil }
-            self.stopTimeUpdates()
+            self.stopTimeUpdates(resetDisplay: true)
         }
     }
 
@@ -374,6 +450,70 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Called when the user manually presses Next — logs a skip event, then advances.
+    /// If the current track has crossfade enabled and we're actively playing,
+    /// the manual skip uses the crossfade transition instead of a hard cut.
+    func nextManual() {
+        guard let idx = currentIndex else { next(); return }
+
+        // If sitting on a pause, fade the bed out before advancing —
+        // mirrors the Space-bar path in togglePlayPause().
+        if case .pause = items[idx] {
+            stopBed()
+            next()
+            return
+        }
+
+        if case .track(let current) = items[idx] {
+            appendLog(trackTitle: current.title, event: .skipped)
+
+            let nextIdx = idx + 1
+            if items.indices.contains(nextIdx) {
+
+                // Next item is a pause — fade out properly then start bed
+                if case .pause(let p) = items[nextIdx], isPlaying {
+                    markCurrentAsPlayed()
+                    currentIndex = nextIdx
+                    pauseEnteredAt = Date()
+                    stopTimeUpdates()
+                    isPlaying = false
+                    fade(to: 0.0, duration: 0.8) {
+                        self.player?.stop()
+                        self.player = nil
+                        self.endScopedAccess()
+                        self.startBed(for: p)
+                    }
+                    return
+                }
+
+                // Next item is a track with crossfade enabled
+                if isPlaying, current.crossfadeEnabled, !isCrossfading,
+                   case .track(let incoming) = items[nextIdx] {
+                    isCrossfading = true
+                    markCurrentAsPlayed()
+                    currentIndex = nextIdx
+                    crossfadeTo(url: incoming.url,
+                                duration: max(0.1, current.crossfadeDuration),
+                                targetVolume: normVolume(for: incoming))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + current.crossfadeDuration + 0.1) {
+                        self.isCrossfading = false
+                    }
+                    return
+                }
+            }
+        }
+
+        next()
+    }
+
+    /// Called when the user manually presses Previous — logs a skip event, then goes back.
+    func previousManual() {
+        if let idx = currentIndex, case .track(let t) = items[idx] {
+            appendLog(trackTitle: t.title, event: .skipped)
+        }
+        previous()
+    }
+
     func seek(to time: TimeInterval) {
         guard let p = player else { return }
         p.currentTime = max(0, min(time, p.duration))
@@ -395,6 +535,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     func fadeOut(duration: TimeInterval = 3.0) {
+        if let idx = currentIndex, case .track(let t) = items[idx] {
+            appendLog(trackTitle: t.title, event: .fadedOut)
+        }
         fade(to: 0.0, duration: duration) {
             self.player?.stop()
             self.player = nil
@@ -402,7 +545,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.altPlayer = nil
             self.endScopedAccess()
             self.isPlaying = false
-            self.stopTimeUpdates()
+            self.stopTimeUpdates(resetDisplay: true)
         }
     }
 
@@ -420,31 +563,19 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
     private func beginScopedAccess(for url: URL) {
         endScopedAccess()
-        #if os(iOS) || os(macOS)
         currentScopedURL = url
         currentScopeActive = url.startAccessingSecurityScopedResource()
-        #endif
     }
 
     private func endScopedAccess() {
-        #if os(iOS) || os(macOS)
         if currentScopeActive, let u = currentScopedURL {
             u.stopAccessingSecurityScopedResource()
         }
         currentScopedURL = nil
         currentScopeActive = false
-        #endif
     }
 
     private func startPlayback(url: URL) {
-#if os(iOS) || os(tvOS) || os(visionOS)
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            // Non-fatal for macOS, required for iOS
-        }
-#endif
         beginScopedAccess(for: url)
         do {
             player = try AVAudioPlayer(contentsOf: url)
@@ -463,6 +594,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             isPlaying = true
             startTimeUpdates()
             fade(to: targetVol)
+            // Log start event
+            if let idx = currentIndex, case .track(let t) = items[idx] {
+                appendLog(trackTitle: t.title, event: .started)
+            }
         } catch {
             print("Failed to play: \(error)")
             isPlaying = false
@@ -519,6 +654,27 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         }
     }
 
+    private func scanBed(pauseID: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == pauseID }),
+              case .pause(let p) = items[idx],
+              let url = p.bedURL,
+              p.bedNormalizeGain == nil else { return }
+        let urlCopy = url
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+            let accessing = urlCopy.startAccessingSecurityScopedResource()
+            let gain = self.computeNormalizeGain(url: urlCopy)
+            if accessing { urlCopy.stopAccessingSecurityScopedResource() }
+            DispatchQueue.main.async {
+                guard let idx = self.items.firstIndex(where: { $0.id == pauseID }),
+                      case .pause(var p) = self.items[idx] else { return }
+                p.bedNormalizeGain = gain
+                self.items[idx] = .pause(p)
+                self.savePlaylist()
+            }
+        }
+    }
+
     private func computeNormalizeGain(url: URL) -> Float? {
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         let format = file.processingFormat
@@ -557,12 +713,22 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             let startVolume = current.volume
             let steps = max(1, Int(duration * 30))
             let stepDuration = duration / Double(steps)
+            let curve = crossfadeCurve   // capture at start of fade
             var i = 0
             Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { timer in
                 i += 1
-                let t = min(1.0, Double(i)/Double(steps))
-                current.volume = startVolume * Float(1.0 - t)
-                next.volume = targetVolume * Float(t)
+                let progress = min(1.0, Double(i) / Double(steps))
+                let (fadeOut, fadeIn): (Double, Double)
+                switch curve {
+                case .linear:
+                    fadeOut = 1.0 - progress
+                    fadeIn  = progress
+                case .equalPower:
+                    fadeOut = cos(progress * .pi / 2)
+                    fadeIn  = sin(progress * .pi / 2)
+                }
+                current.volume = startVolume * Float(fadeOut)
+                next.volume    = targetVolume * Float(fadeIn)
                 if i >= steps {
                     timer.invalidate()
                     current.stop()
@@ -571,6 +737,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     self.altPlayer = nil
                     self.isPlaying = true
                     self.startTimeUpdates()
+                    // Log the incoming track as started
+                    if let idx = self.currentIndex, case .track(let trk) = self.items[idx] {
+                        self.appendLog(trackTitle: trk.title, event: .started)
+                    }
                 }
             }
         } catch {
@@ -617,7 +787,10 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         p.play()
         bedPlayer = p
         bedIsPlaying = true
-        fade(p, to: defaultBedVolume, duration: 1.5)
+        // Normalise: bring bed to -23 dBFS, then scale by the bed-volume preference.
+        currentBedNormGain = pause.bedNormalizeGain.map { min(1.0, $0) } ?? 1.0
+        currentBedTargetVolume = min(1.0, currentBedNormGain * defaultBedVolume)
+        fade(p, to: currentBedTargetVolume, duration: 1.5)
     }
 
     func stopBed(fadeDuration: TimeInterval = 1.5) {
@@ -640,16 +813,26 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             b.volume = 0
             b.play()
             bedIsPlaying = true
-            fade(b, to: defaultBedVolume, duration: 2.0)
+            fade(b, to: currentBedTargetVolume, duration: 2.0)
         }
+    }
+
+    private func applyBedVolumeChange() {
+        // Recalculate the target using the stored norm gain and new defaultBedVolume.
+        currentBedTargetVolume = min(1.0, currentBedNormGain * defaultBedVolume)
+        // Only update the live player if the bed is audible right now.
+        guard let b = bedPlayer, bedIsPlaying else { return }
+        fade(b, to: currentBedTargetVolume, duration: 0.3)
     }
 
     func assignBed(url: URL, to index: Int) {
         guard items.indices.contains(index), case .pause(var p) = items[index] else { return }
         p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         p.bedURL = url
+        p.bedNormalizeGain = nil   // reset so the new file gets scanned
         items[index] = .pause(p)
         savePlaylist()
+        scanBed(pauseID: p.id)
     }
 
     func removeBed(at index: Int) {
@@ -659,6 +842,69 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         items[index] = .pause(p)
         savePlaylist()
         if currentIndex == index { stopBed() }
+    }
+
+    func setTagColor(_ color: RGBAColor?, at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Tag Color")
+        t.tagColor = color
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func toggleCrossfade(at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Crossfade")
+        t.crossfadeEnabled.toggle()
+        t.usesDefaultCrossfadeEnabled = false
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func setCrossfadeDuration(_ duration: TimeInterval, at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Fade Duration")
+        t.crossfadeDuration = duration
+        t.usesDefaultCrossfadeDuration = false
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func setTrim(start: TimeInterval, end: TimeInterval?, at index: Int) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Trim")
+        t.trimStart = start
+        t.trimEnd = end
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    /// Single-undo save for the combined Track Editor (trim + ramp + crossfade).
+    func applyTrackEdit(at index: Int,
+                        trimStart: TimeInterval, trimEnd: TimeInterval?,
+                        rampDuration: TimeInterval?,
+                        crossfadeEnabled: Bool, crossfadeDuration: TimeInterval) {
+        guard items.indices.contains(index), case .track(var t) = items[index] else { return }
+        registerUndo(named: "Edit Track")
+        t.trimStart = trimStart
+        t.trimEnd = trimEnd
+        t.rampDuration = rampDuration
+        t.crossfadeEnabled = crossfadeEnabled
+        t.usesDefaultCrossfadeEnabled = false
+        t.crossfadeDuration = crossfadeDuration
+        t.usesDefaultCrossfadeDuration = false
+        items[index] = .track(t)
+        savePlaylist()
+    }
+
+    func moveItem(with id: UUID, to targetIndex: Int) {
+        guard let fromIndex = items.firstIndex(where: { $0.id == id }), fromIndex != targetIndex else { return }
+        registerUndo(named: "Move Item")
+        let currentID = currentIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil }
+        let item = items.remove(at: fromIndex)
+        items.insert(item, at: max(0, min(targetIndex, items.count)))
+        if let id = currentID { currentIndex = items.firstIndex(where: { $0.id == id }) }
+        savePlaylist()
     }
 
     private func startTimeUpdates() {
@@ -698,7 +944,15 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 self.effectiveEnd = self.duration
             }
             let remaining = max(0, self.effectiveEnd - self.currentTime)
-            self.isNearingEnd = remaining > 0 && remaining <= 30
+            self.isNearingEnd = remaining > 0 && remaining <= self.nearingEndThreshold
+
+            // Ramp timer countdown: counts down to absolute rampDuration position in file
+            if let idx = self.currentIndex, case .track(let t) = self.items[idx], let rd = t.rampDuration {
+                let rampRemaining = rd - self.currentTime
+                self.rampCountdown = rampRemaining > 0 ? rampRemaining : nil
+            } else {
+                self.rampCountdown = nil
+            }
 
             // Early-out: trim end reached
             if let idx = self.currentIndex, case .track(let t) = self.items[idx], let trimEnd = t.trimEnd {
@@ -726,14 +980,17 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
         }
     }
-    private func stopTimeUpdates() {
+    private func stopTimeUpdates(resetDisplay: Bool = false) {
         timeLink?.invalidate()
         timeLink = nil
-        currentTime = 0
-        duration = 0
-        effectiveEnd = 0
-        currentTrimStart = 0
+        if resetDisplay {
+            currentTime = 0
+            duration = 0
+            effectiveEnd = 0
+            currentTrimStart = 0
+        }
         isNearingEnd = false
+        rampCountdown = nil
         meterLevels = [0, 0]
         meterPeaks = [0, 0]
         peakHoldCounters = [0, 0]
@@ -763,6 +1020,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                             p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                         }
                     }
+                    p.bedNormalizeGain = bundle.bedNormalizeGain
                     rebuilt.append(.pause(p))
                 case .track(let bundle):
                     let resolved = Track.from(bookmarkData: bundle.bookmark)
@@ -790,6 +1048,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         t.trimStart = bundle.trimStart
                         t.trimEnd = bundle.trimEnd
                         t.normalizeGain = bundle.normalizeGain
+                        t.rampDuration = bundle.rampDuration
                         let accessing = t.url.startAccessingSecurityScopedResource()
                         t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                         if accessing { t.url.stopAccessingSecurityScopedResource() }
@@ -815,21 +1074,33 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                 return nil
             }
             if !unscanned.isEmpty { scanTracks(unscanned) }
+            let unscannedBeds = rebuilt.compactMap { item -> UUID? in
+                if case .pause(let p) = item, p.bedURL != nil, p.bedNormalizeGain == nil { return p.id }
+                return nil
+            }
+            unscannedBeds.forEach { scanBed(pauseID: $0) }
         } catch { print("Failed to load playlist: \(error)") }
     }
     
     func loadDefaults() {
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
            let decoded = try? JSONDecoder().decode(DefaultsBundle.self, from: data) {
-            defaultCrossfadeEnabled = decoded.crossfadeEnabled
+            defaultCrossfadeEnabled  = decoded.crossfadeEnabled
             defaultCrossfadeDuration = decoded.crossfadeDuration
+            nearingEndThreshold      = decoded.nearingEndThreshold
+            crossfadeCurve           = decoded.crossfadeCurve
         }
         let saved = UserDefaults.standard.float(forKey: "defaultBedVolume")
         defaultBedVolume = saved > 0 ? saved : 0.4
     }
 
     func saveDefaults() {
-        let bundle = DefaultsBundle(crossfadeEnabled: defaultCrossfadeEnabled, crossfadeDuration: defaultCrossfadeDuration)
+        let bundle = DefaultsBundle(
+            crossfadeEnabled:    defaultCrossfadeEnabled,
+            crossfadeDuration:   defaultCrossfadeDuration,
+            nearingEndThreshold: nearingEndThreshold,
+            crossfadeCurve:      crossfadeCurve
+        )
         if let data = try? JSONEncoder().encode(bundle) {
             UserDefaults.standard.set(data, forKey: defaultsKey)
         }
@@ -839,7 +1110,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func savePlaylist() {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path, bedNormalizeGain: p.bedNormalizeGain))
             case .track(let t):
                 if let bm = t.makeBookmark() ?? t.cachedBookmark {
                     return .track(BookmarkWithSettings(
@@ -853,7 +1124,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         durationSeconds: t.durationSeconds,
                         trimStart: t.trimStart,
                         trimEnd: t.trimEnd,
-                        normalizeGain: t.normalizeGain
+                        normalizeGain: t.normalizeGain,
+                        rampDuration: t.rampDuration
                     ))
                 } else { return nil }
             }
@@ -892,13 +1164,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         panel.allowedFileTypes = ["json"]
         guard panel.runModal() == .OK, let url = panel.url,
               let data = try? Data(contentsOf: url) else { return }
-        try? importPlaylistData(data)
+        do {
+            try importPlaylistData(data)
+            currentPlaylistName = url.deletingPathExtension().lastPathComponent
+        } catch { /* ignore */ }
     }
 
     func openExportPanel() {
         let panel = NSSavePanel()
         panel.allowedFileTypes = ["json"]
-        panel.nameFieldStringValue = "playlist.json"
+        panel.nameFieldStringValue = (currentPlaylistName ?? "playlist") + ".json"
         if let dir = lastExportDirectory { panel.directoryURL = dir }
         guard panel.runModal() == .OK, let url = panel.url,
               let data = exportPlaylistData() else { return }
@@ -911,6 +1186,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             }
             try FileManager.default.moveItem(at: tmp, to: url)
             lastExportDirectory = dir
+            currentPlaylistName = url.deletingPathExtension().lastPathComponent
         } catch {
             let alert = NSAlert()
             alert.messageText = "Export failed"
@@ -926,6 +1202,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         stopBed()
         items.removeAll()
         currentIndex = nil
+        currentPlaylistName = nil
         savePlaylist()
     }
 
@@ -933,7 +1210,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     func exportPlaylistData() -> Data? {
         let persisted: [PersistedItem] = items.compactMap { item in
             switch item {
-            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path))
+            case .pause(let p): return .pause(PausePersisted(bedBookmark: p.bedBookmark, bedPath: p.bedURL?.path, bedNormalizeGain: p.bedNormalizeGain))
             case .track(let t):
                 if let bm = t.makeBookmark() ?? t.cachedBookmark {
                     return .track(BookmarkWithSettings(
@@ -947,7 +1224,8 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         durationSeconds: t.durationSeconds,
                         trimStart: t.trimStart,
                         trimEnd: t.trimEnd,
-                        normalizeGain: t.normalizeGain
+                        normalizeGain: t.normalizeGain,
+                        rampDuration: t.rampDuration
                     ))
                 } else { return nil }
             }
@@ -976,6 +1254,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                         p.bedBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                     }
                 }
+                p.bedNormalizeGain = bundle.bedNormalizeGain
                 rebuilt.append(.pause(p))
             case .track(let bundle):
                 let resolved = Track.from(bookmarkData: bundle.bookmark)
@@ -998,6 +1277,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
                     t.trimStart = bundle.trimStart
                     t.trimEnd = bundle.trimEnd
                     t.normalizeGain = bundle.normalizeGain
+                    t.rampDuration = bundle.rampDuration
                     t.isMissing = !FileManager.default.fileExists(atPath: t.url.path)
                     rebuilt.append(.track(t))
                 }
@@ -1005,6 +1285,11 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         }
         self.items = rebuilt
         savePlaylist()
+        let unscannedBeds = rebuilt.compactMap { item -> UUID? in
+            if case .pause(let p) = item, p.bedURL != nil, p.bedNormalizeGain == nil { return p.id }
+            return nil
+        }
+        unscannedBeds.forEach { scanBed(pauseID: $0) }
     }
 
     struct BookmarkWithSettings: Codable {
@@ -1019,8 +1304,13 @@ final class PlayoutViewModel: NSObject, ObservableObject {
         let trimStart: TimeInterval
         let trimEnd: TimeInterval?
         let normalizeGain: Float?
+        let rampDuration: TimeInterval?
 
-        init(bookmark: Data, filePath: String? = nil, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval, usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool, tagColor: RGBAColor?, durationSeconds: TimeInterval?, trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil, normalizeGain: Float? = nil) {
+        init(bookmark: Data, filePath: String? = nil, crossfadeEnabled: Bool, crossfadeDuration: TimeInterval,
+             usesDefaultCrossfadeEnabled: Bool, usesDefaultCrossfadeDuration: Bool,
+             tagColor: RGBAColor?, durationSeconds: TimeInterval?,
+             trimStart: TimeInterval = 0, trimEnd: TimeInterval? = nil,
+             normalizeGain: Float? = nil, rampDuration: TimeInterval? = nil) {
             self.bookmark = bookmark
             self.filePath = filePath
             self.crossfadeEnabled = crossfadeEnabled
@@ -1032,6 +1322,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             self.trimStart = trimStart
             self.trimEnd = trimEnd
             self.normalizeGain = normalizeGain
+            self.rampDuration = rampDuration
         }
 
         init(from decoder: Decoder) throws {
@@ -1047,17 +1338,38 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             trimStart = (try? c.decode(TimeInterval.self, forKey: .trimStart)) ?? 0
             trimEnd = try? c.decode(TimeInterval.self, forKey: .trimEnd)
             normalizeGain = try? c.decode(Float.self, forKey: .normalizeGain)
+            rampDuration = try? c.decode(TimeInterval.self, forKey: .rampDuration)
         }
     }
     
     struct DefaultsBundle: Codable {
         let crossfadeEnabled: Bool
         let crossfadeDuration: TimeInterval
+        let nearingEndThreshold: TimeInterval
+        let crossfadeCurve: CrossfadeCurve
+
+        init(crossfadeEnabled: Bool, crossfadeDuration: TimeInterval,
+             nearingEndThreshold: TimeInterval, crossfadeCurve: CrossfadeCurve) {
+            self.crossfadeEnabled = crossfadeEnabled
+            self.crossfadeDuration = crossfadeDuration
+            self.nearingEndThreshold = nearingEndThreshold
+            self.crossfadeCurve = crossfadeCurve
+        }
+
+        // Backward-compatible decoder: new fields default gracefully when absent
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            crossfadeEnabled   = try  c.decode(Bool.self,         forKey: .crossfadeEnabled)
+            crossfadeDuration  = try  c.decode(TimeInterval.self, forKey: .crossfadeDuration)
+            nearingEndThreshold = (try? c.decode(TimeInterval.self,  forKey: .nearingEndThreshold)) ?? 30
+            crossfadeCurve      = (try? c.decode(CrossfadeCurve.self, forKey: .crossfadeCurve))     ?? .linear
+        }
     }
 
     struct PausePersisted: Codable {
         var bedBookmark: Data?
         var bedPath: String?
+        var bedNormalizeGain: Float?   // optional → backward-compatible with old saves
     }
 
     enum PersistedItem: Codable {
@@ -1093,6 +1405,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
 
 extension PlayoutViewModel: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        // The crossfade timer owns the transition — the outgoing player will reach its
+        // natural end during the overlap.  Ignore the delegate so we don't double-advance.
+        guard !isCrossfading else { return }
+        // Also ignore callbacks from the incoming (alt) player while it hasn't been
+        // promoted to self.player yet.
+        guard player === self.player else { return }
+
+        if let idx = currentIndex, case .track(let t) = items[idx] {
+            appendLog(trackTitle: t.title, event: .finished)
+        }
         markCurrentAsPlayed()
         isPlaying = false
         stopTimeUpdates()
@@ -1104,6 +1426,7 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
                 if case .pause(let p) = items[nextIdx] {
                     stopPlayback(keepIndex: true)
                     startBed(for: p)
+                    pauseEnteredAt = Date()
                 } else {
                     play()
                 }
@@ -1118,19 +1441,24 @@ extension PlayoutViewModel: AVAudioPlayerDelegate {
 
 struct ContentView: View {
     @StateObject private var vm = PlayoutViewModel()
+    @Environment(\.undoManager) private var undoManager
     @State private var draggingItemID: UUID? = nil
 
-    @State private var showingCrossfadeEditor = false
-    @State private var editingCrossfadeIndex: Int? = nil
-    @State private var pendingCrossfadeDuration: Double = 1.0
-
-    @State private var showingTrimEditor = false
-    @State private var editingTrimIndex: Int? = nil
+    // Combined track editor (trim + ramp + crossfade)
+    @State private var showingTrackEditor = false
+    @State private var editingTrackIndex: Int? = nil
     @State private var pendingTrimStart: Double = 0
     @State private var pendingTrimEnd: Double = 0
-    @State private var trimEditorDuration: Double = 60
+    @State private var pendingRampEnabled: Bool = false
+    @State private var pendingRampDuration: Double = 30.0
+    @State private var pendingCrossfadeEnabled: Bool = false
+    @State private var pendingCrossfadeDuration: Double = 1.0
+    @State private var trackEditorDuration: Double = 60
+    @State private var trackEditorURL: URL? = nil
+    @State private var trackEditorTitle: String = ""
 
     @State private var dropTargetIndex: Int? = nil
+    @State private var isFinderDropTargeted = false
     @State private var flashBright = false
     @State private var currentDate = Date()
     private let clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -1144,9 +1472,7 @@ struct ContentView: View {
         let onPlay: () -> Void
         let onInsertPauseBefore: () -> Void
         let onInsertPauseAfter: () -> Void
-        let onToggleCrossfade: () -> Void
-        let onEditCrossfade: () -> Void
-        let onEditTrim: () -> Void
+        let onEditTrack: () -> Void
         let onRemove: () -> Void
         let onRemovePause: () -> Void
         let onSetColor: (RGBAColor?) -> Void
@@ -1193,15 +1519,29 @@ struct ContentView: View {
                     .truncationMode(.tail)
                     .foregroundStyle(t.tagColor.map { Color($0) } ?? Color.primary)
                 Spacer()
-                // Duration with optional trim indicator
-                if let d = displayDuration {
+                // Ramp badge
+                if let rd = t.rampDuration {
+                    let talkUp = max(0, rd - t.trimStart)
                     HStack(spacing: 3) {
-                        if isTrimmed { Image(systemName: "scissors").font(.caption2) }
-                        Text(timeStringStatic(d))
-                            .font(.system(size: 14).monospacedDigit())
-                            .frame(minWidth: 50, alignment: .trailing)
+                        Image(systemName: "timer").font(.caption2)
+                        Text(timeStringStatic(talkUp))
+                            .font(.system(size: 12).monospacedDigit())
                     }
-                    .foregroundStyle(isTrimmed ? Color.orange : Color.primary.opacity(0.55))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.orange.opacity(0.2)))
+                    .foregroundStyle(Color.orange)
+                    .help("Ramp: \(timeStringStatic(talkUp)) from in point")
+                }
+                // Trim badge
+                if isTrimmed {
+                    Image(systemName: "scissors")
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.2)))
+                        .foregroundStyle(Color.orange)
+                        .help("Track is trimmed")
                 }
                 // CF badge
                 if t.crossfadeEnabled {
@@ -1213,17 +1553,12 @@ struct ContentView: View {
                         .foregroundStyle(.tint)
                         .help("Fades out into the next track (\(String(format: "%.1f", t.crossfadeDuration))s)")
                 }
-                // Normalization badge
-                if let gain = t.normalizeGain {
-                    let gainDB = 20.0 * log10(Double(gain))
-                    let label = gainDB >= 0 ? String(format: "+%.1f", gainDB) : String(format: "%.1f", gainDB)
-                    Text(label)
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green.opacity(gain < 1.0 ? 0.22 : 0.14)))
-                        .foregroundStyle(Color.green)
-                        .help("Normalization: \(label) dB applied to reach −23 dBFS")
+                // Duration — always far right before drag handle
+                if let d = displayDuration {
+                    Text(timeStringStatic(d))
+                        .font(.system(size: 14).monospacedDigit())
+                        .frame(minWidth: 50, alignment: .trailing)
+                        .foregroundStyle(Color.primary.opacity(0.55))
                 }
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
@@ -1232,9 +1567,11 @@ struct ContentView: View {
             }
             .padding(.vertical, 7)
             .opacity(isPlayed && !isCurrent ? 0.4 : 1.0)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.22) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
             .overlay(alignment: .leading) {
-                if let rgba = t.tagColor {
+                if isCurrent {
+                    Rectangle().fill(Color.red).frame(width: 4)
+                } else if let rgba = t.tagColor {
                     Rectangle().fill(Color(rgba)).frame(width: 3)
                 }
             }
@@ -1245,9 +1582,7 @@ struct ContentView: View {
                 Divider()
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
-                Button(t.crossfadeEnabled ? "Disable Fade-out to Next" : "Fade Out into Next Track", action: onToggleCrossfade)
-                Button("Set Fade-out Duration…", action: onEditCrossfade)
-                Button("Set Trim Points…", action: onEditTrim)
+                Button("Edit Track…", action: onEditTrack)
                 Menu("Tag Color") {
                     Button("Red") { onSetColor(RGBAColor(Color.red)) }
                     Button("Orange") { onSetColor(RGBAColor(Color.orange)) }
@@ -1287,9 +1622,15 @@ struct ContentView: View {
                     .padding(.leading, 4)
             }
             .padding(.vertical, 7)
-            .background(isCurrent ? Color.red.opacity(0.08) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
+            .background(isCurrent ? Color.red.opacity(0.22) : (index % 2 == 0 ? Color.primary.opacity(0.07) : Color.clear))
+            .overlay(alignment: .leading) {
+                if isCurrent { Rectangle().fill(Color.red).frame(width: 4) }
+            }
             .contentShape(Rectangle())
+            .onTapGesture(count: 2) { onPlay() }
             .contextMenu {
+                Button("Jump to Pause", action: onPlay)
+                Divider()
                 Button("Insert Pause Before", action: onInsertPauseBefore)
                 Button("Insert Pause After", action: onInsertPauseAfter)
                 if bedName != nil {
@@ -1317,6 +1658,11 @@ struct ContentView: View {
     }
 
     private func handleDrop(providers: [NSItemProvider], to index: Int) -> Bool {
+        // Finder file drop takes priority over internal UUID reorder
+        if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) {
+            return handleFinderDrop(providers: providers, at: index)
+        }
+        // Internal reorder — provider carries a UUID string
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { (data, error) in
             guard error == nil else { return }
@@ -1325,6 +1671,30 @@ struct ContentView: View {
             } else if let s = data as? NSString, let uuid = UUID(uuidString: String(s)) {
                 DispatchQueue.main.async { moveItem(with: uuid, to: index) }
             }
+        }
+        return true
+    }
+
+    /// Load file URLs from Finder-drop providers (preserving provider order), then insert at index.
+    @discardableResult
+    private func handleFinderDrop(providers: [NSItemProvider], at index: Int) -> Bool {
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else { return false }
+        var urlsBySlot = [Int: URL]()
+        let group = DispatchGroup()
+        for (slot, provider) in fileProviders.enumerated() {
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (data, _) in
+                defer { group.leave() }
+                var url: URL?
+                if let d = data as? Data { url = URL(dataRepresentation: d, relativeTo: nil) }
+                else if let u = data as? URL { url = u }
+                if let u = url { urlsBySlot[slot] = u }
+            }
+        }
+        group.notify(queue: .main) {
+            let urls = urlsBySlot.sorted { $0.key < $1.key }.map(\.value)
+            vm.insertFiles(urls: urls, at: index)
         }
         return true
     }
@@ -1342,7 +1712,7 @@ struct ContentView: View {
                     controls
                 }
             }
-            .navigationTitle("Segue")
+            .navigationTitle(vm.currentPlaylistName.map { "Segue — \($0)" } ?? "Segue")
             .focusedSceneObject(vm)
             .toolbar {
                 // Add audio — primary / most-used action
@@ -1368,42 +1738,42 @@ struct ContentView: View {
                 ToolbarItem(placement: .automatic) { settingsButton }
             }
             .onAppear {
-                vm.loadPersistedPlaylist()
+                vm.setUndoManager(undoManager)
                 vm.loadDefaults()
+                vm.loadPersistedPlaylist()
             }
-            .sheet(isPresented: $showingCrossfadeEditor) {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Fade-out Duration")
-                        .font(.headline)
-                    HStack {
-                        Slider(value: $pendingCrossfadeDuration, in: 0...10, step: 0.1)
-                        Text(String(format: "%.1fs", pendingCrossfadeDuration))
-                            .frame(width: 60, alignment: .trailing)
-                    }
-                    HStack {
-                        Spacer()
-                        Button("Cancel") { showingCrossfadeEditor = false }
-                        Button("Save") {
-                            if let i = editingCrossfadeIndex, vm.items.indices.contains(i), case .track(var t) = vm.items[i] {
-                                t.crossfadeDuration = pendingCrossfadeDuration
-                                t.usesDefaultCrossfadeDuration = false
-                                vm.items[i] = .track(t)
-                                vm.savePlaylist()
-                            }
-                            showingCrossfadeEditor = false
+            .sheet(isPresented: $showingTrackEditor) {
+                TrackEditorView(
+                    trackTitle: trackEditorTitle,
+                    trackURL: trackEditorURL,
+                    trimStart: $pendingTrimStart,
+                    trimEnd: $pendingTrimEnd,
+                    rampEnabled: $pendingRampEnabled,
+                    rampDuration: $pendingRampDuration,
+                    crossfadeEnabled: $pendingCrossfadeEnabled,
+                    crossfadeDuration: $pendingCrossfadeDuration,
+                    duration: trackEditorDuration,
+                    onSave: {
+                        if let i = editingTrackIndex {
+                            vm.applyTrackEdit(
+                                at: i,
+                                trimStart: pendingTrimStart,
+                                trimEnd: pendingTrimEnd < trackEditorDuration ? pendingTrimEnd : nil,
+                                rampDuration: pendingRampEnabled ? pendingRampDuration : nil,
+                                crossfadeEnabled: pendingCrossfadeEnabled,
+                                crossfadeDuration: pendingCrossfadeDuration
+                            )
                         }
-                        .keyboardShortcut(.defaultAction)
-                    }
-                }
-                .padding()
-                .frame(minWidth: 320)
-            }
-            .sheet(isPresented: $showingTrimEditor) {
-                trimEditorSheet
+                        showingTrackEditor = false
+                    },
+                    onCancel: { showingTrackEditor = false }
+                )
             }
             .sheet(isPresented: $vm.showingSettings) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Playback Defaults").font(.title2).bold()
+
+                    // ── Crossfade ─────────────────────────────────────────
                     Toggle("Fade out into next track by default", isOn: $vm.defaultCrossfadeEnabled)
                     HStack {
                         Text("Default fade-out duration")
@@ -1411,27 +1781,50 @@ struct ContentView: View {
                         Text(String(format: "%.1fs", vm.defaultCrossfadeDuration)).frame(width: 60, alignment: .trailing)
                     }
                     .accessibilityElement(children: .combine)
+                    HStack {
+                        Text("Crossfade curve")
+                        Spacer()
+                        Picker("", selection: $vm.crossfadeCurve) {
+                            ForEach(CrossfadeCurve.allCases, id: \.self) { curve in
+                                Text(curve.displayName).tag(curve)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+
                     Divider()
+
+                    // ── Beds ──────────────────────────────────────────────
                     HStack {
                         Text("Bed volume")
                         Slider(value: $vm.defaultBedVolume, in: 0...1, step: 0.05)
                         Text(String(format: "%.0f%%", vm.defaultBedVolume * 100)).frame(width: 60, alignment: .trailing)
                     }
                     .accessibilityElement(children: .combine)
+
+                    Divider()
+
+                    // ── Cue warning ───────────────────────────────────────
+                    HStack {
+                        Text("Nearing-end warning")
+                        Slider(value: $vm.nearingEndThreshold, in: 5...120, step: 5)
+                        Text("\(Int(vm.nearingEndThreshold))s").frame(width: 48, alignment: .trailing)
+                    }
+                    .accessibilityElement(children: .combine)
+                    Text("Flash the red cue warning this many seconds before the track ends.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     HStack {
                         Spacer()
                         Button("Close") {
-                            // Save new defaults
                             vm.saveDefaults()
                             // Apply updated defaults to any tracks that are still following defaults
                             for i in vm.items.indices {
                                 if case .track(var t) = vm.items[i] {
-                                    if t.usesDefaultCrossfadeEnabled {
-                                        t.crossfadeEnabled = vm.defaultCrossfadeEnabled
-                                    }
-                                    if t.usesDefaultCrossfadeDuration {
-                                        t.crossfadeDuration = vm.defaultCrossfadeDuration
-                                    }
+                                    if t.usesDefaultCrossfadeEnabled  { t.crossfadeEnabled  = vm.defaultCrossfadeEnabled }
+                                    if t.usesDefaultCrossfadeDuration { t.crossfadeDuration = vm.defaultCrossfadeDuration }
                                     vm.items[i] = .track(t)
                                 }
                             }
@@ -1442,10 +1835,13 @@ struct ContentView: View {
                     }
                 }
                 .padding()
-                .frame(minWidth: 360)
+                .frame(minWidth: 400)
             }
             .sheet(isPresented: $vm.showingKeyboardShortcuts) {
                 keyboardShortcutsSheet
+            }
+            .sheet(isPresented: $vm.showingPlayLog) {
+                playLogSheet
             }
         }
     }
@@ -1480,6 +1876,56 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func playlistRowView(index: Int, item: PlaylistItem, trackNum: Int?) -> some View {
+        let isTarget = dropTargetIndex == index
+        PlaylistRow(
+            index: index,
+            trackNumber: trackNum,
+            item: item,
+            isCurrent: vm.currentIndex == index,
+            isPlayed: { if case .track(let t) = item { return vm.playedTrackIDs.contains(t.id) }; return false }(),
+            onPlay: { vm.play(at: index) },
+            onInsertPauseBefore: { vm.addPause(at: index) },
+            onInsertPauseAfter: { vm.addPause(at: index + 1) },
+            onEditTrack: {
+                if case .track(let t) = vm.items[index] {
+                    editingTrackIndex = index
+                    let dur = t.durationSeconds ?? 60
+                    trackEditorDuration = dur
+                    pendingTrimStart = t.trimStart
+                    pendingTrimEnd = t.trimEnd ?? dur
+                    pendingRampEnabled = t.rampDuration != nil
+                    pendingRampDuration = t.rampDuration ?? (t.trimStart + 30.0)
+                    pendingCrossfadeEnabled = t.crossfadeEnabled
+                    pendingCrossfadeDuration = t.crossfadeDuration
+                    trackEditorURL = t.url
+                    trackEditorTitle = t.title
+                    showingTrackEditor = true
+                }
+            },
+            onRemove: { vm.remove(atOffsets: IndexSet([index])) },
+            onRemovePause: { vm.remove(atOffsets: IndexSet([index])) },
+            onSetColor: { vm.setTagColor($0, at: index) },
+            bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
+            onAssignBed: { openBedPicker(for: index) },
+            onRemoveBed: { vm.removeBed(at: index) }
+        )
+        .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
+        .onDrop(of: [UTType.text, UTType.fileURL],
+                isTargeted: Binding(
+                    get: { self.dropTargetIndex == index },
+                    set: { v in self.dropTargetIndex = v ? index : (self.dropTargetIndex == index ? nil : self.dropTargetIndex) }
+                )) { self.handleDrop(providers: $0, to: index) }
+        .overlay(alignment: .top) {
+            if isTarget {
+                Rectangle().fill(Color.accentColor).frame(height: 2)
+                    .shadow(color: Color.accentColor.opacity(0.6), radius: 4, y: 0)
+            }
+        }
+        .background(isTarget ? Color.accentColor.opacity(0.08) : Color.clear)
+    }
+
     private var playlistView: some View {
         let trackNums: [Int?] = {
             var count = 0
@@ -1492,84 +1938,40 @@ struct ContentView: View {
         ScrollViewReader { proxy in
         List {
             ForEach(Array(vm.items.enumerated()), id: \.offset) { index, item in
-                PlaylistRow(
-                    index: index,
-                    trackNumber: trackNums[index],
-                    item: item,
-                    isCurrent: vm.currentIndex == index,
-                    isPlayed: { if case .track(let t) = item { return vm.playedTrackIDs.contains(t.id) }; return false }(),
-                    onPlay: { vm.play(at: index) },
-                    onInsertPauseBefore: { vm.addPause(at: index) },
-                    onInsertPauseAfter: { vm.addPause(at: index + 1) },
-                    onToggleCrossfade: {
-                        if case .track(var t) = vm.items[index] {
-                            t.crossfadeEnabled.toggle()
-                            t.usesDefaultCrossfadeEnabled = false
-                            vm.items[index] = .track(t)
-                            vm.savePlaylist()
-                        }
-                    },
-                    onEditCrossfade: {
-                        if case .track(let t) = vm.items[index] {
-                            editingCrossfadeIndex = index
-                            pendingCrossfadeDuration = t.crossfadeDuration
-                            showingCrossfadeEditor = true
-                        }
-                    },
-                    onEditTrim: {
-                        if case .track(let t) = vm.items[index] {
-                            editingTrimIndex = index
-                            pendingTrimStart = t.trimStart
-                            let dur = t.durationSeconds ?? 60
-                            trimEditorDuration = dur
-                            pendingTrimEnd = t.trimEnd ?? dur
-                            showingTrimEditor = true
-                        }
-                    },
-                    onRemove: {
-                        vm.items.remove(at: index)
-                        vm.savePlaylist()
-                    },
-                    onRemovePause: {
-                        vm.items.remove(at: index)
-                        vm.savePlaylist()
-                    },
-                    onSetColor: { newColor in
-                        if case .track(var t) = vm.items[index] {
-                            t.tagColor = newColor
-                            vm.items[index] = .track(t)
-                            vm.savePlaylist()
-                        }
-                    },
-                    bedName: { if case .pause(let p) = item { return p.bedFilename } else { return nil } }(),
-                    onAssignBed: { openBedPicker(for: index) },
-                    onRemoveBed: { vm.removeBed(at: index) }
-                )
-                .onDrag { NSItemProvider(object: item.id.uuidString as NSString) }
-                .onDrop(
-                    of: [UTType.text],
-                    isTargeted: Binding(
-                        get: { dropTargetIndex == index },
-                        set: { isOver in
-                            dropTargetIndex = isOver ? index : (dropTargetIndex == index ? nil : dropTargetIndex)
-                        })
-                ) { providers in
-                    handleDrop(providers: providers, to: index)
-                }
-                .overlay(alignment: .top) {
-                    if dropTargetIndex == index {
-                        Rectangle()
-                            .fill(Color.accentColor)
-                            .frame(height: 2)
-                            .shadow(color: Color.accentColor.opacity(0.6), radius: 4, y: 0)
-                    }
-                }
-                .background(dropTargetIndex == index ? Color.accentColor.opacity(0.08) : Color.clear)
+                playlistRowView(index: index, item: item, trackNum: trackNums[index])
             }
             .onMove { from, to in vm.move(from: from, to: to) }
             .onDelete { offsets in vm.remove(atOffsets: offsets) }
         }
         .listStyle(.inset)
+        // Catch Finder drops onto empty space between rows (append to end)
+        .onDrop(of: [UTType.fileURL], isTargeted: $isFinderDropTargeted) { providers in
+            handleFinderDrop(providers: providers, at: vm.items.count)
+        }
+        .overlay {
+            if vm.items.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "plus.circle.dashed")
+                        .font(.system(size: 40))
+                        .foregroundStyle(isFinderDropTargeted ? Color.accentColor : Color.secondary.opacity(0.4))
+                    Text("Drop audio files here")
+                        .font(.body)
+                        .foregroundStyle(isFinderDropTargeted ? Color.accentColor : Color.secondary.opacity(0.4))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .allowsHitTesting(false)
+            }
+        }
+        .onAppear {
+            if let idx = vm.currentIndex {
+                proxy.scrollTo(idx, anchor: .center)
+            }
+        }
+        .onChange(of: vm.currentIndex) { idx in
+            guard let idx else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(idx, anchor: .center) }
+        }
         .onChange(of: dropTargetIndex) { idx in
             guard let idx = idx, !vm.items.isEmpty else { return }
             if idx <= 1 {
@@ -1623,7 +2025,7 @@ struct ContentView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
 
                     if remainingPlaylistDuration > 0 {
-                        let endDate = currentDate.addingTimeInterval(remainingPlaylistDuration)
+                        let endDate = Date().addingTimeInterval(remainingPlaylistDuration)
                         // Show Ends card — accent-tinted to signal it's a target
                         VStack(spacing: 3) {
                             Text("SHOW ENDS")
@@ -1649,7 +2051,11 @@ struct ContentView: View {
 
             // Progress bar + time display
             VStack(spacing: 4) {
-                Slider(value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { vm.seek(to: $0) }), in: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1))
+                ProgressSlider(
+                    value: Binding(get: { vm.effectiveEnd > 0 ? vm.currentTime : 0 }, set: { _ in }),
+                    range: 0...(vm.effectiveEnd > 0 ? vm.effectiveEnd : 1),
+                    onSeek: { vm.seek(to: $0) }
+                )
                 HStack {
                     Text(timeString(vm.currentTime))
                         .monospacedDigit()
@@ -1659,7 +2065,15 @@ struct ContentView: View {
                         .monospacedDigit()
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(flashBright ? 0.5 : 0)))
+                        .background {
+                            if flashBright {
+                                RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(0.5))
+                            }
+                        }
+                        .animation(flashBright
+                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                            : .easeOut(duration: 0.3),
+                                   value: flashBright)
                 }
                 .font(.body)
                 .foregroundStyle(.secondary)
@@ -1683,6 +2097,17 @@ struct ContentView: View {
                                 .font(.system(size: 28, weight: .bold))
                                 .lineLimit(3)
                                 .foregroundStyle(vm.isNearingEnd ? Color.white : Color.primary)
+                            if let countdown = vm.rampCountdown {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "timer")
+                                    Text("RAMP")
+                                        .font(.system(size: 12, weight: .heavy))
+                                        .kerning(1.5)
+                                    Text(timeString(countdown))
+                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                }
+                                .foregroundStyle(countdown <= 5 ? Color.red : Color.orange)
+                            }
                             if case .pause(let p) = vm.items[idx], let bedName = p.bedFilename {
                                 HStack(spacing: 8) {
                                     Text(bedName)
@@ -1700,6 +2125,11 @@ struct ContentView: View {
                                     .help("Pause/resume bed (B)")
                                     .keyboardShortcut("b", modifiers: [])
                                 }
+                            }
+                            if let entered = vm.pauseEnteredAt {
+                                Text("In break · " + timeString(currentDate.timeIntervalSince(entered)))
+                                    .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
                         } else {
                             Text("—")
@@ -1726,7 +2156,11 @@ struct ContentView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(flashBright ? Color.red : (vm.isPlaying ? Color.red.opacity(0.13) : Color.secondary.opacity(0.13)))
-                        .id(vm.currentIndex) // recreate on track change, killing any in-progress animation
+                        .id(vm.currentIndex)
+                        .animation(flashBright
+                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                            : .easeOut(duration: 0.3),
+                                   value: flashBright)
                 )
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(vm.isPlaying ? Color.red.opacity(0.5) : Color.secondary.opacity(0.35), lineWidth: 1))
 
@@ -1741,6 +2175,12 @@ struct ContentView: View {
                             .font(.system(size: 28, weight: .bold))
                             .lineLimit(3)
                             .foregroundStyle(nextItem.isPause ? .orange : .primary)
+                        if case .track(let t) = nextItem,
+                           let dur = t.effectiveDuration ?? t.durationSeconds {
+                            Text(timeString(dur))
+                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         Text("End of playlist")
                             .font(.system(size: 28, weight: .bold))
@@ -1764,7 +2204,7 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 // Left zone
                 HStack(spacing: 20) {
-                    Button { vm.previous() } label: { Image(systemName: "backward.end.fill").font(.title3) }
+                    Button { vm.previousManual() } label: { Image(systemName: "backward.end.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .help("Previous track")
                         .keyboardShortcut(.leftArrow, modifiers: [.command])
@@ -1782,7 +2222,7 @@ struct ContentView: View {
 
                 // Right zone
                 HStack(spacing: 20) {
-                    Button { vm.next() } label: { Image(systemName: "forward.end.fill").font(.title3) }
+                    Button { vm.nextManual() } label: { Image(systemName: "forward.end.fill").font(.title3) }
                         .disabled(vm.items.isEmpty)
                         .help("Next track")
                         .keyboardShortcut(.rightArrow, modifiers: [.command])
@@ -1807,13 +2247,7 @@ struct ContentView: View {
         .background(Color.primary.opacity(0.02))
         .onReceive(clockTimer) { date in currentDate = date }
         .onChange(of: vm.isNearingEnd) { nearing in
-            if nearing {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    flashBright = true
-                }
-            } else {
-                flashBright = false
-            }
+            flashBright = nearing
         }
     }
 
@@ -1945,62 +2379,90 @@ struct ContentView: View {
         .frame(minWidth: 400, minHeight: 500)
     }
 
-    private var trimEditorSheet: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Trim Track").font(.headline)
+    // MARK: - Play Log sheet
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("In point (start offset)")
-                    Spacer()
-                    Text(timeString(pendingTrimStart))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: $pendingTrimStart, in: 0...max(trimEditorDuration - 1, 1), step: 0.5)
-                    .onChange(of: pendingTrimStart) { v in
-                        if pendingTrimEnd <= v { pendingTrimEnd = min(v + 1, trimEditorDuration) }
-                    }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Out point (early end)")
-                    Spacer()
-                    Text(timeString(pendingTrimEnd))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: $pendingTrimEnd, in: max(pendingTrimStart + 1, 1)...max(trimEditorDuration, pendingTrimStart + 2), step: 0.5)
-            }
-
-            let effective = pendingTrimEnd - pendingTrimStart
-            Text("Effective duration: \(timeString(max(0, effective)))")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
+    private var playLogSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
             HStack {
-                Button("Clear Trim") {
-                    pendingTrimStart = 0
-                    pendingTrimEnd = trimEditorDuration
-                }
+                Text("Play Log").font(.title2).bold()
                 Spacer()
-                Button("Cancel") { showingTrimEditor = false }
-                Button("Save") {
-                    if let i = editingTrimIndex, vm.items.indices.contains(i), case .track(var t) = vm.items[i] {
-                        t.trimStart = pendingTrimStart
-                        t.trimEnd = pendingTrimEnd < trimEditorDuration ? pendingTrimEnd : nil
-                        vm.items[i] = .track(t)
-                        vm.savePlaylist()
-                    }
-                    showingTrimEditor = false
-                }
-                .keyboardShortcut(.defaultAction)
+                Button("Export CSV…") { exportPlayLogCSV() }
+                    .disabled(vm.playLog.isEmpty)
+                Button("Clear") { vm.playLog.removeAll() }
+                    .disabled(vm.playLog.isEmpty)
             }
+            .padding()
+
+            Divider()
+
+            if vm.playLog.isEmpty {
+                VStack {
+                    Spacer()
+                    Text("No events recorded yet")
+                        .foregroundStyle(.tertiary)
+                        .font(.title3)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                List(vm.playLog.reversed()) { entry in
+                    HStack(spacing: 12) {
+                        Image(systemName: entry.event.icon)
+                            .foregroundStyle(entry.event.color)
+                            .frame(width: 20)
+                        Text(entry.trackTitle)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer()
+                        Text(entry.event.displayName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        Text(entry.timestamp, style: .time)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 72, alignment: .trailing)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .listStyle(.inset)
+            }
+
+            Divider()
+            HStack {
+                Text(vm.playLog.isEmpty ? "" : "\(vm.playLog.count) event\(vm.playLog.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Close") { vm.showingPlayLog = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding()
         }
-        .padding()
-        .frame(minWidth: 380)
+        .frame(minWidth: 520, minHeight: 380)
     }
+
+    private func exportPlayLogCSV() {
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["csv"]
+        let nameFmt = DateFormatter()
+        nameFmt.dateFormat = "yyyy-MM-dd"
+        panel.nameFieldStringValue = "play-log-\(nameFmt.string(from: Date())).csv"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var lines = ["Timestamp,Track,Event"]
+        let tsFmt = DateFormatter()
+        tsFmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        for entry in vm.playLog {
+            let time  = tsFmt.string(from: entry.timestamp)
+            let title = entry.trackTitle
+                .replacingOccurrences(of: "\"", with: "\"\"")
+            lines.append("\(time),\"\(title)\",\(entry.event.rawValue)")
+        }
+        let csv = lines.joined(separator: "\n")
+        try? csv.write(to: url, atomically: true, encoding: .utf8)
+    }
+
 
     private struct ShortcutRow: View {
         let key: String
@@ -2028,12 +2490,7 @@ struct ContentView: View {
     }
     
     private func moveItem(with id: UUID, to targetIndex: Int) {
-        guard let fromIndex = vm.items.firstIndex(where: { $0.id == id }) else { return }
-        if fromIndex == targetIndex { return }
-        let item = vm.items.remove(at: fromIndex)
-        let safeTarget = max(0, min(targetIndex, vm.items.count))
-        vm.items.insert(item, at: safeTarget)
-        vm.savePlaylist()
+        vm.moveItem(with: id, to: targetIndex)
     }
 
     private func openBedPicker(for index: Int) {
@@ -2046,6 +2503,605 @@ struct ContentView: View {
         vm.assignBed(url: url, to: index)
     }
 
+}
+
+// MARK: - Trim Editor
+
+/// Manages the preview AVAudioPlayer for the trim editor so timer callbacks
+/// can safely mutate @Published state without value-type struct capture problems.
+// MARK: - Waveform
+
+private final class WaveformLoader: ObservableObject {
+    @Published var samples: [Float] = []
+
+    func load(url: URL) {
+        samples = []
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let result = Self.compute(url: url)
+            DispatchQueue.main.async { self?.samples = result }
+        }
+    }
+
+    private static func compute(url: URL, targetCount: Int = 400) -> [Float] {
+        guard let file = try? AVAudioFile(forReading: url), file.length > 0 else { return [] }
+        let framesPerBucket = max(1, Int(file.length) / targetCount)
+        let chunkSize: AVAudioFrameCount = 4096
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                            frameCapacity: chunkSize) else { return [] }
+        let channelCount = Int(file.processingFormat.channelCount)
+        var result: [Float] = []
+        var bucketPeak: Float = 0
+        var framesInBucket = 0
+        while file.framePosition < file.length {
+            let rem = AVAudioFrameCount(file.length - file.framePosition)
+            buffer.frameLength = min(chunkSize, rem)
+            guard (try? file.read(into: buffer, frameCount: buffer.frameLength)) != nil,
+                  let floatData = buffer.floatChannelData else { break }
+            for i in 0..<Int(buffer.frameLength) {
+                var peak: Float = 0
+                for ch in 0..<channelCount { peak = max(peak, abs(floatData[ch][i])) }
+                bucketPeak = max(bucketPeak, peak)
+                framesInBucket += 1
+                if framesInBucket >= framesPerBucket {
+                    result.append(bucketPeak); bucketPeak = 0; framesInBucket = 0
+                }
+            }
+        }
+        if framesInBucket > 0 { result.append(bucketPeak) }
+        guard let maxVal = result.max(), maxVal > 0 else { return result }
+        return result.map { $0 / maxVal }
+    }
+}
+
+private struct WaveformTrimView: View {
+    let duration: Double
+    @Binding var trimStart: Double
+    @Binding var trimEnd: Double
+    let rampEnabled: Bool
+    @Binding var rampDuration: Double
+    let samples: [Float]
+    let previewTime: TimeInterval?
+
+    @State private var dragTarget: DragTarget? = nil
+    private enum DragTarget { case inPoint, outPoint, rampEnd }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let inX   = CGFloat(trimStart / max(duration, 1)) * w
+            let outX  = CGFloat(trimEnd   / max(duration, 1)) * w
+            let rampX = rampEnabled
+                ? CGFloat(rampDuration / max(duration, 1)) * w
+                : inX
+
+            Canvas { ctx, size in
+                // Background
+                ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                         with: .color(Color.primary.opacity(0.07)))
+
+                // Waveform bars
+                if !samples.isEmpty {
+                    let barW = size.width / CGFloat(samples.count)
+                    for (i, s) in samples.enumerated() {
+                        let x  = CGFloat(i) * barW
+                        let bh = max(1, CGFloat(s) * size.height * 0.85)
+                        let y  = (size.height - bh) / 2
+                        let mid = x + barW * 0.5
+                        let active = mid >= inX && mid <= outX
+                        ctx.fill(
+                            Path(CGRect(x: x, y: y, width: max(1, barW - 0.5), height: bh)),
+                            with: .color(active ? Color.accentColor : Color.secondary.opacity(0.2))
+                        )
+                    }
+                }
+
+                // Trim region tint
+                if outX > inX {
+                    ctx.fill(Path(CGRect(x: inX, y: 0, width: outX - inX, height: size.height)),
+                             with: .color(Color.accentColor.opacity(0.1)))
+                }
+
+                // Ramp zone tint (from in-point to ramp end)
+                if rampEnabled && rampX > inX && rampX <= outX {
+                    ctx.fill(Path(CGRect(x: inX, y: 0, width: rampX - inX, height: size.height)),
+                             with: .color(Color.orange.opacity(0.12)))
+                }
+
+                // In-point and out-point handles
+                ctx.fill(Path(CGRect(x: max(0, inX - 1.5),  y: 0, width: 3, height: size.height)), with: .color(.green))
+                ctx.fill(Path(CGRect(x: max(0, outX - 1.5), y: 0, width: 3, height: size.height)), with: .color(.red))
+
+                // Ramp end marker (orange dashed line, top half only)
+                if rampEnabled && rampX > inX && rampX <= outX {
+                    let rampPath: Path = {
+                        var p = Path()
+                        let segH: CGFloat = 6
+                        var y: CGFloat = 0
+                        while y < size.height {
+                            p.addRect(CGRect(x: rampX - 1, y: y, width: 2, height: min(segH, size.height - y)))
+                            y += segH * 2
+                        }
+                        return p
+                    }()
+                    ctx.fill(rampPath, with: .color(Color.orange.opacity(0.9)))
+
+                    // Ramp label
+                    ctx.draw(
+                        Text("RAMP")
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(Color.orange),
+                        at: CGPoint(x: rampX + 4, y: 6),
+                        anchor: .topLeading
+                    )
+                }
+
+                // Playhead
+                if let t = previewTime, duration > 0 {
+                    let px = CGFloat(t / duration) * size.width
+                    ctx.fill(Path(CGRect(x: px - 1, y: 0, width: 2, height: size.height)),
+                             with: .color(Color.white.opacity(0.85)))
+                }
+
+                // Time labels — in point
+                ctx.draw(
+                    Text(mmss(trimStart))
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.green),
+                    at: CGPoint(x: inX + 5, y: size.height - 5),
+                    anchor: .bottomLeading
+                )
+                // Out point
+                ctx.draw(
+                    Text(mmss(trimEnd))
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.red),
+                    at: CGPoint(x: outX - 5, y: size.height - 5),
+                    anchor: .bottomTrailing
+                )
+
+                // "Loading…" placeholder
+                if samples.isEmpty {
+                    ctx.draw(
+                        Text("Loading waveform…")
+                            .font(.caption)
+                            .foregroundStyle(Color.secondary),
+                        at: CGPoint(x: size.width / 2, y: size.height / 2)
+                    )
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { val in
+                        let t = Double(val.location.x / max(w, 1)) * duration
+                        if dragTarget == nil {
+                            // Determine closest handle to pick
+                            let dIn  = abs(val.location.x - inX)
+                            let dOut = abs(val.location.x - outX)
+                            let dRamp = rampEnabled ? abs(val.location.x - rampX) : CGFloat.infinity
+                            if rampEnabled && dRamp < dIn && dRamp < dOut {
+                                dragTarget = .rampEnd
+                            } else {
+                                dragTarget = dIn <= dOut ? .inPoint : .outPoint
+                            }
+                        }
+                        switch dragTarget! {
+                        case .inPoint:
+                            trimStart = max(0, min(t, trimEnd - 0.5))
+                        case .outPoint:
+                            trimEnd = min(duration, max(t, trimStart + 0.5))
+                        case .rampEnd:
+                            // rampDuration is absolute file position — clamp within active region
+                            rampDuration = max(trimStart + 0.5, min(t, trimEnd - 0.5))
+                        }
+                    }
+                    .onEnded { _ in dragTarget = nil }
+            )
+        }
+    }
+
+    private func mmss(_ t: TimeInterval) -> String {
+        let n = Int(max(0, t))
+        return String(format: "%d:%02d", (n / 60) % 60, n % 60)
+    }
+}
+
+// MARK: - Trim preview state
+
+private final class TrimPreviewState: ObservableObject {
+    enum Mode { case inPoint, outPoint }
+
+    @Published var isPlaying: Bool = false
+    @Published var currentTime: TimeInterval = 0
+    @Published var mode: Mode? = nil
+
+    private var player: AVAudioPlayer?
+    private var scopedURL: URL?
+    private var timer: Timer?
+
+    /// Start playback from `start`. Plays until the track ends or `stop()` is called.
+    func preview(url: URL, from start: TimeInterval, mode: Mode) {
+        stop()           // clears mode — set it afterwards
+        self.mode = mode
+        let accessing = url.startAccessingSecurityScopedResource()
+        if accessing { scopedURL = url }
+        guard let p = try? AVAudioPlayer(contentsOf: url) else {
+            if accessing { url.stopAccessingSecurityScopedResource(); scopedURL = nil }
+            return
+        }
+        p.prepareToPlay()
+        p.currentTime = start
+        p.volume = 1.0
+        p.play()
+        player      = p
+        currentTime = start
+        isPlaying   = true
+
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] t in
+            guard let self, let p = self.player else { t.invalidate(); return }
+            self.currentTime = p.currentTime
+            if !p.isPlaying { self.stop() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate(); timer = nil
+        player?.stop();      player = nil
+        scopedURL?.stopAccessingSecurityScopedResource(); scopedURL = nil
+        isPlaying = false
+        mode = nil
+    }
+
+    deinit { stop() }
+}
+
+// MARK: - Track Editor (combined trim + ramp + crossfade, Option B layout)
+
+private struct TrackEditorView: View {
+    let trackTitle: String
+    let trackURL: URL?
+    @Binding var trimStart: Double
+    @Binding var trimEnd: Double
+    @Binding var rampEnabled: Bool
+    @Binding var rampDuration: Double
+    @Binding var crossfadeEnabled: Bool
+    @Binding var crossfadeDuration: Double
+    let duration: Double
+    let onSave: () -> Void
+    let onCancel: () -> Void
+
+    @StateObject private var preview = TrimPreviewState()
+    @StateObject private var waveform = WaveformLoader()
+
+    private let previewWindow: TimeInterval = 10
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+
+            // ── Header ────────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Edit Track").font(.title3).bold()
+                Text(trackTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding([.horizontal, .top], 18)
+            .padding(.bottom, 12)
+
+            Divider()
+
+            // ── Two-column body ───────────────────────────────────────
+            HStack(alignment: .top, spacing: 0) {
+
+                // Left column: Trim + Ramp
+                VStack(alignment: .leading, spacing: 14) {
+
+                    // ── TRIM ──────────────────────────────────────────
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Trim", systemImage: "scissors")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        // In point
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("In point")
+                                Text("— skip from start")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Text(fmtTime(trimStart))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $trimStart,
+                                   in: 0...max(duration - 1, 1),
+                                   step: 0.5)
+                            .onChange(of: trimStart) { v in
+                                if trimEnd <= v { trimEnd = min(v + 1, duration) }
+                                // rampDuration is absolute — does not move with trimStart
+                                preview.stop()
+                            }
+                        }
+
+                        // Out point
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Out point")
+                                Text("— stop early")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Text(fmtTime(trimEnd))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $trimEnd,
+                                   in: max(trimStart + 1, 1)...max(duration, trimStart + 2),
+                                   step: 0.5)
+                            .onChange(of: trimEnd) { _ in preview.stop() }
+                        }
+
+                        HStack {
+                            Text("Effective duration:")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(fmtTime(max(0, trimEnd - trimStart)))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Clear") {
+                                trimStart = 0
+                                trimEnd = duration
+                                preview.stop()
+                            }
+                            .font(.caption)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    // ── RAMP TIMER ────────────────────────────────────
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Ramp Timer", systemImage: "timer")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Enable ramp timer", isOn: $rampEnabled)
+
+                        if rampEnabled {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Talk-up from in point")
+                                    Spacer()
+                                    Text(fmtTime(max(0, rampDuration - trimStart)))
+                                        .font(.system(.callout, design: .monospaced))
+                                        .foregroundStyle(Color.orange)
+                                }
+                                let lo = max(0.5, trimStart + 0.5)
+                                let hi = max(lo + 0.5, trimEnd - 0.5)
+                                Slider(value: $rampDuration, in: lo...hi, step: 0.5)
+                                    .tint(.orange)
+                            }
+                            Text("ON AIR counts down to this point in the track. Moving the in point does not shift the ramp.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("Set a countdown so you know when to stop talking and let the music run.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                Divider()
+                    .frame(maxHeight: .infinity)
+
+                // Right column: Crossfade
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Crossfade", systemImage: "waveform.path")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Fade out into next track", isOn: $crossfadeEnabled)
+
+                    if crossfadeEnabled {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Fade duration")
+                                Spacer()
+                                Text(String(format: "%.1fs", crossfadeDuration))
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $crossfadeDuration, in: 0.1...15, step: 0.1)
+                        }
+                        Text("The outgoing track fades out over this duration while the next track fades in. The fade begins automatically near the end.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("When enabled, this track automatically crossfades into the next one when it nears its end.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
+                .frame(width: 240, alignment: .topLeading)
+            }
+            .frame(minHeight: 240)
+
+            Divider()
+
+            // ── Full-width waveform ───────────────────────────────────
+            VStack(alignment: .leading, spacing: 8) {
+                WaveformTrimView(
+                    duration: duration,
+                    trimStart: $trimStart,
+                    trimEnd: $trimEnd,
+                    rampEnabled: rampEnabled,
+                    rampDuration: $rampDuration,
+                    samples: waveform.samples,
+                    previewTime: preview.isPlaying ? preview.currentTime : nil
+                )
+                .frame(height: 80)
+
+                // Preview toolbar
+                HStack(spacing: 8) {
+                    Button {
+                        guard let url = trackURL else { return }
+                        preview.preview(url: url, from: trimStart, mode: .inPoint)
+                    } label: {
+                        Label("In", systemImage: "arrow.right.to.line.compact")
+                    }
+                    .disabled(trackURL == nil || preview.isPlaying)
+                    .help("Preview from in point")
+
+                    Button {
+                        guard let url = trackURL else { return }
+                        preview.preview(url: url,
+                                        from: max(trimStart, trimEnd - previewWindow),
+                                        mode: .outPoint)
+                    } label: {
+                        Label("Out", systemImage: "arrow.left.to.line.compact")
+                    }
+                    .disabled(trackURL == nil || preview.isPlaying)
+                    .help("Preview from \(Int(previewWindow))s before out point")
+
+                    if preview.isPlaying {
+                        Button { preview.stop() } label: { Image(systemName: "stop.fill") }
+                            .foregroundStyle(.red)
+                            .help("Stop preview")
+
+                        Button("Set Point") {
+                            let t = preview.currentTime
+                            switch preview.mode {
+                            case .inPoint:
+                                trimStart = t
+                                if trimEnd <= trimStart { trimEnd = min(trimStart + 1, duration) }
+                            case .outPoint:
+                                trimEnd = t
+                                if trimEnd <= trimStart { trimEnd = trimStart + 1 }
+                            case nil: break
+                            }
+                            preview.stop()
+                        }
+                        .foregroundStyle(.yellow)
+                        .help("Snap trim point to current playback position")
+
+                        Text(fmtTime(preview.currentTime))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    // Hint: ramp is draggable on the waveform
+                    if rampEnabled {
+                        Label("Drag orange marker to adjust ramp", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.callout)
+            }
+            .padding([.horizontal, .top], 14)
+            .padding(.bottom, 10)
+
+            Divider()
+
+            // ── Action row ────────────────────────────────────────────
+            HStack {
+                Spacer()
+                Button("Cancel") { preview.stop(); onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save")   { preview.stop(); onSave()   }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+        }
+        .frame(minWidth: 680)
+        .onAppear { if let url = trackURL { waveform.load(url: url) } }
+        .onDisappear { preview.stop() }
+    }
+
+    private func fmtTime(_ t: TimeInterval) -> String {
+        let n = Int(max(0, t))
+        let h = n / 3600; let m = (n / 60) % 60; let s = n % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
+                     : String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Progress Slider (custom, avoids NSSlider ghost artifact)
+
+struct ProgressSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var onSeek: (Double) -> Void = { _ in }
+
+    @State private var isDragging = false
+    @State private var dragValue: Double = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let span = max(range.upperBound - range.lowerBound, 0.0001)
+            let displayed = isDragging ? dragValue : value
+            let frac = max(0, min(1, (displayed - range.lowerBound) / span))
+            let trackHeight: CGFloat = 4
+            let thumbSize: CGFloat = 14
+            let usable = max(geo.size.width - thumbSize, 0)
+            let thumbX = usable * CGFloat(frac)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.15))
+                    .frame(height: trackHeight)
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: thumbX + thumbSize / 2, height: trackHeight)
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().stroke(Color.black.opacity(0.25), lineWidth: 0.5))
+                    .frame(width: thumbSize, height: thumbSize)
+                    .offset(x: thumbX)
+                    .shadow(color: .black.opacity(0.2), radius: 1, y: 0.5)
+            }
+            .frame(height: thumbSize)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let f = max(0, min(1, (g.location.x - thumbSize / 2) / max(usable, 1)))
+                        let v = range.lowerBound + Double(f) * span
+                        if !isDragging { isDragging = true }
+                        dragValue = v
+                        onSeek(v)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+        }
+        .frame(height: 14)
+    }
 }
 
 // MARK: - VU Meter
@@ -2139,13 +3195,7 @@ struct FilePickerBridge: View {
     let onPick: ([URL]) -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        #if os(iOS)
-        IOSPicker(allowedExtensions: allowedExtensions, onPick: { urls in onPick(urls); dismiss() })
-        #elseif os(macOS)
         MacPicker(allowedExtensions: allowedExtensions, onPick: { urls in onPick(urls); dismiss() })
-        #else
-        Text("Unsupported platform")
-        #endif
     }
 }
 
@@ -2153,13 +3203,7 @@ struct FileImportBridge: View {
     let onComplete: (Data?) -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        #if os(iOS)
-        IOSImport(onComplete: { data in onComplete(data); dismiss() })
-        #elseif os(macOS)
         MacImport(onComplete: { data in onComplete(data); dismiss() })
-        #else
-        Text("Unsupported platform")
-        #endif
     }
 }
 
@@ -2170,86 +3214,10 @@ struct FileExportBridge: View {
     let onComplete: () -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        #if os(iOS)
-        IOSExport(dataProvider: dataProvider, onComplete: { onComplete(); dismiss() })
-        #elseif os(macOS)
         MacExport(dataProvider: dataProvider, initialDirectory: initialDirectory, onDirectoryChosen: onDirectoryChosen, onComplete: { onComplete(); dismiss() })
-        #else
-        Text("Unsupported platform")
-        #endif
     }
 }
 
-#if os(iOS)
-import UniformTypeIdentifiers
-import MobileCoreServices
-
-struct IOSPicker: UIViewControllerRepresentable {
-    let allowedExtensions: [String]
-    let onPick: ([URL]) -> Void
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let types: [UTType] = [.audio]
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
-        picker.allowsMultipleSelection = true
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coord { Coord(onPick: onPick) }
-    final class Coord: NSObject, UIDocumentPickerDelegate {
-        let onPick: ([URL]) -> Void
-        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            onPick(urls)
-        }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick([]) }
-    }
-}
-
-struct IOSImport: UIViewControllerRepresentable {
-    let onComplete: (Data?) -> Void
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let types: [UTType] = [.json]
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coord { Coord(onComplete: onComplete) }
-    final class Coord: NSObject, UIDocumentPickerDelegate {
-        let onComplete: (Data?) -> Void
-        init(onComplete: @escaping (Data?) -> Void) { self.onComplete = onComplete }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { onComplete(nil); return }
-            let data = try? Data(contentsOf: url)
-            onComplete(data)
-        }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onComplete(nil) }
-    }
-}
-
-struct IOSExport: UIViewControllerRepresentable {
-    let dataProvider: () -> Data?
-    let onComplete: () -> Void
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let tempURL: URL
-        if let data = dataProvider() {
-            let dir = FileManager.default.temporaryDirectory
-            tempURL = dir.appendingPathComponent("playlist.json")
-            try? data.write(to: tempURL)
-        } else {
-            tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("empty.json")
-            try? Data().write(to: tempURL)
-        }
-        let vc = UIActivityViewController(activityItems: [tempURL], applicationActivities: nil)
-        vc.completionWithItemsHandler = { _, _, _, _ in onComplete() }
-        return vc
-    }
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
-
-#if os(macOS)
 struct MacPicker: NSViewControllerRepresentable {
     let allowedExtensions: [String]
     let onPick: ([URL]) -> Void
@@ -2336,7 +3304,6 @@ struct MacExport: NSViewControllerRepresentable {
     }
     func updateNSViewController(_ nsViewController: NSViewController, context: Context) {}
 }
-#endif
 
 #Preview {
     ContentView()

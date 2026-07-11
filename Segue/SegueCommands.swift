@@ -71,13 +71,13 @@ struct SegueCommands: Commands {
             Divider()
 
             Button("Next Track") {
-                vm?.next()
+                vm?.nextManual()
             }
             .keyboardShortcut(.rightArrow, modifiers: .command)
             .disabled(vm?.isPlaying != true && vm?.currentIndex == nil)
 
             Button("Previous Track") {
-                vm?.previous()
+                vm?.previousManual()
             }
             .keyboardShortcut(.leftArrow, modifiers: .command)
             .disabled(vm?.isPlaying != true && vm?.currentIndex == nil)
@@ -122,6 +122,13 @@ struct SegueCommands: Commands {
                 vm?.showingClearConfirm = true
             }
             .disabled(vm == nil || vm?.items.isEmpty == true)
+
+            Divider()
+
+            Button("Show Play Log…") {
+                vm?.showingPlayLog = true
+            }
+            .disabled(vm == nil)
         }
 
         // ── View menu — inject into the system's existing View menu ────────

@@ -231,7 +231,7 @@ private struct PlaybackHelp: View {
             .padding(.leading, 4)
 
             HelpSubheading(text: "Progress scrubber")
-            HelpBody(text: "The slider above the transport row shows the current position within the track. Drag it to seek. The time counter on the left shows elapsed time; the counter on the right shows remaining time. When under 30 seconds remain, the background flashes red as a cue warning.")
+            HelpBody(text: "The slider above the transport row shows the current position within the track. Drag it to seek. The time counter on the left shows elapsed time; the counter on the right shows remaining time. When the remaining time drops below the **nearing-end threshold** (default 30 seconds, adjustable in Settings), the panel background flashes red as a cue warning.")
 
             HelpSubheading(text: "Seek")
             HelpBody(text: "Press **←** or **→** (without modifier) to seek back or forward 5 seconds. Press **⌘E** to jump to 10 seconds before the end — useful for cueing up the next track's intro during a live show.")
@@ -254,7 +254,12 @@ private struct TrackOptionsHelp: View {
 
             HelpSubheading(text: "Crossfade (fade out into next track)")
             HelpBody(text: "Right-click a track and choose **Fade Out into Next Track** to enable crossfade. When the track nears its end, Segue fades it out while simultaneously fading in the next track. The duration defaults to your global setting but can be set per-track via **Set Fade-out Duration…**")
-            HelpBody(text: "A blue **CF** badge appears on any track with crossfade enabled. The default can be changed under **Settings** (⌘,).")
+            HelpBody(text: "A blue **CF** badge appears on any track with crossfade enabled. The default duration and curve can be changed under **Settings** (⌘,).")
+            HelpBody(text: "**Crossfade curve** controls the volume shape during the transition:")
+            VStack(alignment: .leading, spacing: 4) {
+                HelpShortcutRow(key: "Linear",      description: "Both tracks move in straight lines — simple and predictable")
+                HelpShortcutRow(key: "Equal Power", description: "Volume follows a sine/cosine curve — perceptually smoother, recommended for music")
+            }
 
             HelpSubheading(text: "Trim points")
             HelpBody(text: "Right-click a track and choose **Set Trim Points…** to set an In point (skip the start) and an Out point (stop early). The trimmed duration is shown in orange with a scissors icon. The progress scrubber and Show Ends calculation both honour your trim points.")
@@ -308,6 +313,11 @@ private struct SessionManagementHelp: View {
             HelpSubheading(text: "Show Ends clock")
             HelpBody(text: "The Show Ends display in the control area estimates the wall-clock time when the playlist will finish, based on the remaining durations of unplayed tracks. It respects trim points.")
             HelpTip(text: "Show Ends is an estimate. Live mic segments (pauses) are not timed, so the estimate drifts whenever you stop for a presenter break.")
+
+            HelpSubheading(text: "Play Log")
+            HelpBody(text: "Segue keeps a timestamped log of every track event during your session: when tracks start, finish naturally, are skipped, or fade out. Open it via **Session › Show Play Log…**.")
+            HelpBody(text: "The log is displayed in reverse-chronological order. Use **Export CSV…** to save it as a comma-separated file — useful for music licensing reports (APRA, PPL, BMI, etc.). The log is cleared when you quit the app or press **Clear** in the log sheet.")
+            HelpTip(text: "Export the play log at the end of each show and archive it with the show recording. Licensing bodies typically require a track list with times to process your reporting.")
 
             HelpSubheading(text: "Auto-save")
             HelpBody(text: "Segue saves the playlist automatically every time you make a change. Your session is restored the next time you open the app, including file locations, trim points, crossfade settings, and tag colours.")
@@ -376,6 +386,7 @@ private struct KeyboardShortcutsHelp: View {
             HelpSubheading(text: "Session")
             VStack(alignment: .leading, spacing: 4) {
                 HelpShortcutRow(key: "⇧ ⌘ R",    description: "Reset session (keep tracks, clear played)")
+                HelpShortcutRow(key: "Session menu", description: "Show Play Log…")
             }
 
             HelpSubheading(text: "Track actions")
