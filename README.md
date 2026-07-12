@@ -11,7 +11,7 @@
 <p align="center"><strong>Requires macOS 26 (Tahoe) or later.</strong></p>
 
 <p align="center">
-  <a href="https://pearcenuk.github.io/segue-site/">Website</a> ·
+  <a href="https://segue.npearce.me">Website</a> ·
   <a href="https://github.com/pearcenuk/Segue/releases/latest">Download</a> ·
   <a href="https://github.com/pearcenuk/Segue/issues">Issues</a>
 </p>
