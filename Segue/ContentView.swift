@@ -576,6 +576,7 @@ final class PlayoutViewModel: NSObject, ObservableObject {
     }
 
     private func startPlayback(url: URL) {
+        pauseEnteredAt = nil
         beginScopedAccess(for: url)
         do {
             player = try AVAudioPlayer(contentsOf: url)
