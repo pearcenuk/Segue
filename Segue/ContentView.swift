@@ -584,13 +584,16 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             player?.prepareToPlay()
             player?.volume = 0
             let targetVol: Float
+            let trimStart: TimeInterval
             if let idx = currentIndex, case .track(let t) = items[idx] {
-                if t.trimStart > 0 { player?.currentTime = t.trimStart }
+                trimStart = t.trimStart
                 targetVol = normVolume(for: t)
             } else {
+                trimStart = 0
                 targetVol = 1.0
             }
             player?.play()
+            if trimStart > 0 { player?.currentTime = trimStart }
             isPlaying = true
             startTimeUpdates()
             fade(to: targetVol)
@@ -717,6 +720,9 @@ final class PlayoutViewModel: NSObject, ObservableObject {
             let next = try makePlayer(url: url, volume: 0)
             altPlayer = next
             next.play()
+            if let idx = currentIndex, case .track(let t) = items[idx], t.trimStart > 0 {
+                next.currentTime = t.trimStart
+            }
             let startVolume = current.volume
             let steps = max(1, Int(duration * 30))
             let stepDuration = duration / Double(steps)
